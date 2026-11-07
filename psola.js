@@ -93,10 +93,42 @@ export function pitchShiftPSOLA(pcm, sampleRate, track, semitones, marks) {
   return out;
 }
 
-/** ハモリのプリセット（半音） */
+/**
+ * ハモリの音量を原音に揃える（RMS 一致、ピークは 0.98 以下に制限）。
+ * 下方向シフトはグレインの間隔が広がって RMS が下がるため、生成後に補正する。
+ * @returns {{gain:number}} 適用したゲイン
+ */
+export function matchLoudness(ref, y) {
+  const rms = (a) => { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * a[i]; return Math.sqrt(s / Math.max(1, a.length)); };
+  const peak = (a) => { let p = 0; for (let i = 0; i < a.length; i++) p = Math.max(p, Math.abs(a[i])); return p; };
+  const rRef = rms(ref), rY = rms(y);
+  if (rY < 1e-6) return { gain: 1 };
+  let gain = Math.min(4, Math.max(0.5, rRef / rY));
+  const p = peak(y) * gain;
+  if (p > 0.98) gain *= 0.98 / p;
+  for (let i = 0; i < y.length; i++) y[i] *= gain;
+  return { gain };
+}
+
+/**
+ * ハモリのカタログ（半音・固定間隔）。
+ * 3度は曲のキーで長・短が入れ替わるため、固定の 3 度は音によって濁る。
+ * キー推定による自動切替は Phase 2（要件 F2-1）。ここでは長・短を両方用意して選べるようにする。
+ * 画面に並べる既定セットは DEFAULT_PRESET_IDS（設定画面で変更可）。
+ */
 export const HARMONY_PRESETS = [
-  { id: 'up8', semitones: 12, label: 'オクターブ上' },
-  { id: 'up5', semitones: 7, label: '5度上' },
-  { id: 'down5', semitones: -7, label: '5度下' },
-  { id: 'down8', semitones: -12, label: 'オクターブ下' },
+  { id: 'up3m', semitones: 3, label: '短3度上', icon: '🐥', color: '#ffb703' },
+  { id: 'up3M', semitones: 4, label: '長3度上', icon: '🐤', color: '#fb8500' },
+  { id: 'up4', semitones: 5, label: '4度上', icon: '🐦', color: '#f94144' },
+  { id: 'up5', semitones: 7, label: '5度上', icon: '🦜', color: '#f3722c' },
+  { id: 'up6', semitones: 9, label: '6度上', icon: '🦋', color: '#f8961e' },
+  { id: 'up8', semitones: 12, label: 'オクターブ上', icon: '🐝', color: '#f9c74f' },
+  { id: 'down3m', semitones: -3, label: '短3度下', icon: '🐨', color: '#90be6d' },
+  { id: 'down3M', semitones: -4, label: '長3度下', icon: '🐻', color: '#43aa8b' },
+  { id: 'down4', semitones: -5, label: '4度下', icon: '🐼', color: '#4d908e' },
+  { id: 'down5', semitones: -7, label: '5度下', icon: '🦁', color: '#577590' },
+  { id: 'down8', semitones: -12, label: 'オクターブ下', icon: '🐘', color: '#277da1' },
 ];
+
+/** 画面に並べる既定のハモリ（2026-11-07 実機フィードバック：オクターブは外し、種類を増やす） */
+export const DEFAULT_PRESET_IDS = ['up3m', 'up3M', 'up4', 'up5', 'down3M', 'down5'];

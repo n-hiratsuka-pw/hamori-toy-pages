@@ -3,19 +3,20 @@
 // すべて端末内で完結し、外部へは何も送信しない。
 
 import { detectPitch } from './pitch.js';
-import { pitchShiftPSOLA, buildPitchMarks, HARMONY_PRESETS } from './psola.js';
+import { pitchShiftPSOLA, buildPitchMarks, matchLoudness, HARMONY_PRESETS, DEFAULT_PRESET_IDS } from './psola.js';
 
 const MAX_SECONDS = 20;
 const MIN_SECONDS = 0.5;
-const LEVEL_ORIGINAL = 0.9;
-const LEVEL_HARMONY = 0.55;
+const SETTINGS_KEY = 'hamori.settings.v1';
 
-const PRESET_UI = {
-  up8: { icon: '🐤', color: '#ffb703' },
-  up5: { icon: '🐥', color: '#fb8500' },
-  down5: { icon: '🐻', color: '#8ecae6' },
-  down8: { icon: '🐘', color: '#219ebc' },
+// 設定の既定値（保護者用パネルで変更。端末内 localStorage に保存）
+const DEFAULT_SETTINGS = {
+  levelOriginal: 0.7,  // 原音の再生レベル
+  levelHarmony: 0.9,   // ハモリ各本の再生レベル（ハモリが少し目立つ既定）
+  presetIds: DEFAULT_PRESET_IDS.slice(),
 };
+
+const PRESET_BY_ID = Object.fromEntries(HARMONY_PRESETS.map((p) => [p.id, p]));
 
 const $ = (id) => document.getElementById(id);
 const el = {
@@ -24,6 +25,7 @@ const el = {
   btnRecord: $('btn-record'),
   btnPlay: $('btn-play'),
   btnBack: $('btn-back'),
+  btnSettings: $('btn-settings'),
   meter: $('meter-bar'),
   timer: $('timer'),
   hint: $('record-hint'),
@@ -32,11 +34,20 @@ const el = {
   busy: $('busy'),
   busyText: $('busy-text'),
   error: $('error'),
+  settings: $('settings'),
+  settingsClose: $('settings-close'),
+  settingsReset: $('settings-reset'),
+  levelOriginal: $('level-original'),
+  levelHarmony: $('level-harmony'),
+  levelOriginalValue: $('level-original-value'),
+  levelHarmonyValue: $('level-harmony-value'),
+  presetList: $('preset-list'),
 };
 
 const state = {
   ctx: null,
   workletReady: false,
+  settings: loadSettings(),
   // 録音
   recording: false,
   stream: null,
@@ -50,9 +61,11 @@ const state = {
   pcm: null,
   sampleRate: 0,
   track: null,
+  marks: null,
   duration: 0,
-  buffers: { original: null, harmonies: {} },
-  enabled: {},
+  originalBuffer: null,
+  harmonyBuffers: {},   // id → AudioBuffer（生成済みキャッシュ）
+  enabled: {},          // id → bool（スイッチ状態）
   // 再生
   playing: false,
   sources: [],
@@ -61,7 +74,35 @@ const state = {
   rafId: 0,
 };
 
-for (const p of HARMONY_PRESETS) state.enabled[p.id] = false;
+// ---------- 設定 ----------
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return structuredClone(DEFAULT_SETTINGS);
+    const s = JSON.parse(raw);
+    const presetIds = Array.isArray(s.presetIds) ? s.presetIds.filter((id) => PRESET_BY_ID[id]) : DEFAULT_SETTINGS.presetIds.slice();
+    return {
+      levelOriginal: clamp01(s.levelOriginal, DEFAULT_SETTINGS.levelOriginal),
+      levelHarmony: clamp01(s.levelHarmony, DEFAULT_SETTINGS.levelHarmony),
+      presetIds: presetIds.length ? presetIds : DEFAULT_SETTINGS.presetIds.slice(),
+    };
+  } catch (_) {
+    return structuredClone(DEFAULT_SETTINGS);
+  }
+}
+
+function clamp01(v, fallback) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(1.5, Math.max(0, n)) : fallback;
+}
+
+function saveSettings() {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(state.settings)); } catch (_) { /* 保存不可でも動作は続ける */ }
+}
+
+function activePresets() {
+  return state.settings.presetIds.map((id) => PRESET_BY_ID[id]).filter(Boolean);
+}
 
 // ---------- 共通 ----------
 function showError(msg) {
@@ -188,7 +229,6 @@ async function stopRecording() {
     el.timer.textContent = '0';
     return;
   }
-  // 先頭・末尾の短いフェード（クリック音防止）
   const fade = Math.min(Math.round(0.01 * state.sampleRate), Math.floor(pcm.length / 4));
   for (let i = 0; i < fade; i++) { pcm[i] *= i / fade; pcm[pcm.length - 1 - i] *= i / fade; }
 
@@ -204,23 +244,31 @@ async function processRecording() {
   const { pcm, sampleRate, ctx } = state;
   const t0 = performance.now();
   state.track = detectPitch(pcm, sampleRate);
+  state.marks = buildPitchMarks(pcm, sampleRate, state.track);
+  state.harmonyBuffers = {};
+  state.originalBuffer = toAudioBuffer(ctx, pcm, sampleRate);
   await yieldToUI();
 
   setBusy(true, 'はもりを つくっているよ…');
-  await yieldToUI();
-  const marks = buildPitchMarks(pcm, sampleRate, state.track);
-  state.buffers.harmonies = {};
-  for (const p of HARMONY_PRESETS) {
-    const y = pitchShiftPSOLA(pcm, sampleRate, state.track, p.semitones, marks);
-    state.buffers.harmonies[p.id] = toAudioBuffer(ctx, y, sampleRate);
-    await yieldToUI();
-  }
-  state.buffers.original = toAudioBuffer(ctx, pcm, sampleRate);
+  await ensureHarmonies();
   console.log(`processing: ${(performance.now() - t0).toFixed(0)} ms for ${state.duration.toFixed(1)} s`);
 
   setBusy(false);
+  buildSwitches();
   showScreen('play');
   drawCanvas();
+}
+
+/** 設定で選ばれているハモリのうち未生成のものを生成する */
+async function ensureHarmonies() {
+  const { pcm, sampleRate, ctx } = state;
+  for (const p of activePresets()) {
+    if (state.harmonyBuffers[p.id]) continue;
+    const y = pitchShiftPSOLA(pcm, sampleRate, state.track, p.semitones, state.marks);
+    matchLoudness(pcm, y);
+    state.harmonyBuffers[p.id] = toAudioBuffer(ctx, y, sampleRate);
+    await yieldToUI();
+  }
 }
 
 function toAudioBuffer(ctx, data, sampleRate) {
@@ -232,13 +280,17 @@ function toAudioBuffer(ctx, data, sampleRate) {
 // ---------- 再生 ----------
 function startPlayback() {
   const ctx = state.ctx;
-  if (!state.buffers.original) return;
+  if (!state.originalBuffer) return;
   stopPlayback();
   const master = ctx.createGain();
   master.gain.value = 1;
+  // 最終段はリミッター相当（重ね合わせ時の音割れ防止。通常の音量では動作しない）
   const comp = ctx.createDynamicsCompressor();
-  comp.threshold.value = -12;
-  comp.ratio.value = 4;
+  comp.threshold.value = -3;
+  comp.knee.value = 2;
+  comp.ratio.value = 12;
+  comp.attack.value = 0.003;
+  comp.release.value = 0.15;
   master.connect(comp);
   comp.connect(ctx.destination);
 
@@ -257,8 +309,11 @@ function startPlayback() {
     state.gains[id] = g;
     return src;
   };
-  const main = addVoice('original', state.buffers.original, LEVEL_ORIGINAL);
-  for (const p of HARMONY_PRESETS) addVoice(p.id, state.buffers.harmonies[p.id], state.enabled[p.id] ? LEVEL_HARMONY : 0);
+  const main = addVoice('original', state.originalBuffer, state.settings.levelOriginal);
+  for (const p of activePresets()) {
+    const buf = state.harmonyBuffers[p.id];
+    if (buf) addVoice(p.id, buf, state.enabled[p.id] ? state.settings.levelHarmony : 0);
+  }
   main.onended = () => { if (state.playing) stopPlayback(); };
 
   state.playing = true;
@@ -289,12 +344,22 @@ function animatePlayhead() {
 function toggleHarmony(id) {
   state.enabled[id] = !state.enabled[id];
   const btn = el.switches.querySelector(`[data-id="${id}"]`);
-  btn.classList.toggle('on', state.enabled[id]);
+  if (btn) btn.classList.toggle('on', state.enabled[id]);
   if (state.playing && state.gains[id]) {
-    const g = state.gains[id].gain;
-    g.setTargetAtTime(state.enabled[id] ? LEVEL_HARMONY : 0, state.ctx.currentTime, 0.02);
+    state.gains[id].gain.setTargetAtTime(state.enabled[id] ? state.settings.levelHarmony : 0, state.ctx.currentTime, 0.02);
   }
   if (!state.playing) drawCanvas();
+}
+
+/** 設定の音量変更を再生中にも反映する */
+function applyLevelsLive() {
+  if (!state.playing) return;
+  const now = state.ctx.currentTime;
+  if (state.gains.original) state.gains.original.gain.setTargetAtTime(state.settings.levelOriginal, now, 0.02);
+  for (const p of activePresets()) {
+    const g = state.gains[p.id];
+    if (g) g.gain.setTargetAtTime(state.enabled[p.id] ? state.settings.levelHarmony : 0, now, 0.02);
+  }
 }
 
 // ---------- 可視化 ----------
@@ -310,7 +375,6 @@ function drawCanvas(playhead = -1) {
   const W = cv.width, H = cv.height;
   g.clearRect(0, 0, W, H);
 
-  // オクターブごとの薄い帯
   for (let f = 100; f < F_HI; f *= 2) {
     const y1 = yOf(f, H), y2 = yOf(f * 2, H);
     g.fillStyle = 'rgba(0,0,0,0.03)';
@@ -339,7 +403,7 @@ function drawCanvas(playhead = -1) {
     g.stroke();
   };
 
-  for (const p of HARMONY_PRESETS) if (state.enabled[p.id]) drawTrack(p.semitones, PRESET_UI[p.id].color, 6);
+  for (const p of activePresets()) if (state.enabled[p.id]) drawTrack(p.semitones, p.color, 6);
   drawTrack(0, '#3a2e1f', 8);
 
   if (playhead >= 0) {
@@ -353,17 +417,83 @@ function drawCanvas(playhead = -1) {
 // ---------- UI 組み立て ----------
 function buildSwitches() {
   el.switches.innerHTML = '';
-  for (const p of HARMONY_PRESETS) {
-    const ui = PRESET_UI[p.id];
+  for (const p of activePresets()) {
     const btn = document.createElement('button');
-    btn.className = 'switch';
+    btn.className = 'switch' + (state.enabled[p.id] ? ' on' : '');
     btn.dataset.id = p.id;
-    btn.style.setProperty('--lamp', ui.color);
-    btn.innerHTML = `<span class="icon">${ui.icon}</span><span class="label">${p.label}</span><span class="lamp"></span>`;
+    btn.style.setProperty('--lamp', p.color);
+    btn.innerHTML = `<span class="icon">${p.icon}</span><span class="label">${p.label}</span><span class="lamp"></span>`;
     btn.addEventListener('click', () => toggleHarmony(p.id));
     el.switches.appendChild(btn);
   }
 }
+
+// ---------- 設定パネル ----------
+function openSettings() {
+  el.levelOriginal.value = Math.round(state.settings.levelOriginal * 100);
+  el.levelHarmony.value = Math.round(state.settings.levelHarmony * 100);
+  el.levelOriginalValue.textContent = el.levelOriginal.value;
+  el.levelHarmonyValue.textContent = el.levelHarmony.value;
+  el.presetList.innerHTML = '';
+  for (const p of HARMONY_PRESETS) {
+    const label = document.createElement('label');
+    label.className = 'preset-item';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = p.id;
+    cb.checked = state.settings.presetIds.includes(p.id);
+    cb.addEventListener('change', onPresetChange);
+    label.appendChild(cb);
+    label.insertAdjacentHTML('beforeend', ` <span class="icon">${p.icon}</span> ${p.label} <small>(${p.semitones > 0 ? '+' : ''}${p.semitones} 半音)</small>`);
+    el.presetList.appendChild(label);
+  }
+  el.settings.hidden = false;
+}
+
+function onPresetChange() {
+  const ids = Array.from(el.presetList.querySelectorAll('input:checked')).map((c) => c.value);
+  // カタログ順を保つ
+  state.settings.presetIds = HARMONY_PRESETS.map((p) => p.id).filter((id) => ids.includes(id));
+  saveSettings();
+}
+
+async function closeSettings() {
+  el.settings.hidden = true;
+  if (state.settings.presetIds.length === 0) {
+    state.settings.presetIds = DEFAULT_SETTINGS.presetIds.slice();
+    saveSettings();
+  }
+  if (state.pcm) {
+    const wasPlaying = state.playing;
+    if (wasPlaying) stopPlayback();
+    const missing = activePresets().some((p) => !state.harmonyBuffers[p.id]);
+    if (missing) { setBusy(true, 'はもりを つくっているよ…'); await yieldToUI(); await ensureHarmonies(); setBusy(false); }
+    buildSwitches();
+    drawCanvas();
+    if (wasPlaying) startPlayback();
+  }
+}
+
+el.levelOriginal.addEventListener('input', () => {
+  state.settings.levelOriginal = Number(el.levelOriginal.value) / 100;
+  el.levelOriginalValue.textContent = el.levelOriginal.value;
+  saveSettings();
+  applyLevelsLive();
+});
+el.levelHarmony.addEventListener('input', () => {
+  state.settings.levelHarmony = Number(el.levelHarmony.value) / 100;
+  el.levelHarmonyValue.textContent = el.levelHarmony.value;
+  saveSettings();
+  applyLevelsLive();
+});
+el.settingsReset.addEventListener('click', () => {
+  state.settings = structuredClone(DEFAULT_SETTINGS);
+  saveSettings();
+  applyLevelsLive();
+  openSettings();
+});
+el.settingsClose.addEventListener('click', closeSettings);
+el.btnSettings.addEventListener('click', openSettings);
 
 el.btnRecord.addEventListener('click', () => { state.recording ? stopRecording() : startRecording(); });
 el.btnPlay.addEventListener('click', () => { state.playing ? stopPlayback() : startPlayback(); });

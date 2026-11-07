@@ -82,7 +82,7 @@ body {
 
 .switches {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(84px, 1fr));
   gap: 12px;
   width: 100%;
   max-width: 900px;
@@ -139,3 +139,29 @@ body {
   .switch .icon { font-size: 36px; }
   .switch .label { font-size: 11px; }
 }
+
+/* 設定（保護者用） */
+.gear {
+  position: fixed; top: max(10px, env(safe-area-inset-top)); right: 12px;
+  width: 40px; height: 40px; border-radius: 50%; border: none;
+  background: rgba(0, 0, 0, 0.06); color: var(--ink); font-size: 20px; opacity: 0.6; cursor: pointer; z-index: 5;
+}
+.settings { position: fixed; inset: 0; background: rgba(58, 46, 31, 0.45); z-index: 12; display: flex; align-items: flex-end; justify-content: center; }
+.settings[hidden] { display: none; }
+.settings-panel {
+  width: 100%; max-width: 560px; max-height: 88vh; overflow-y: auto;
+  background: var(--panel); border-radius: 24px 24px 0 0; padding: 20px 20px max(20px, env(safe-area-inset-bottom));
+  font-size: 15px; user-select: text; -webkit-user-select: text;
+}
+.settings-panel h2 { margin: 0 0 12px; font-size: 18px; }
+.settings-panel h3 { margin: 18px 0 8px; font-size: 15px; }
+.settings-panel .row { display: grid; grid-template-columns: 1fr 2fr 2.5em; align-items: center; gap: 10px; margin: 10px 0; }
+.settings-panel input[type="range"] { width: 100%; }
+.settings-panel output { text-align: right; font-variant-numeric: tabular-nums; }
+.preset-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px 12px; }
+.preset-item { display: flex; align-items: center; gap: 6px; padding: 6px 4px; }
+.preset-item .icon { font-size: 20px; }
+.preset-item small { opacity: 0.6; }
+.note { font-size: 12px; opacity: 0.7; line-height: 1.5; }
+.settings-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+.pill.primary { background: var(--play); color: #fff; }

@@ -10,6 +10,7 @@
 </head>
 <body>
   <main id="app">
+    <button id="btn-settings" class="gear" aria-label="設定（保護者用）">⚙</button>
     <!-- 画面1: 録音 -->
     <section id="screen-record" class="screen active">
       <div class="hint" id="record-hint">まるいボタンをおして、うたってね</div>
@@ -36,6 +37,30 @@
     <div id="busy" class="busy" hidden>
       <div class="spinner"></div>
       <div id="busy-text">おとを つくっているよ…</div>
+    </div>
+
+    <!-- 設定（保護者用） -->
+    <div id="settings" class="settings" hidden>
+      <div class="settings-panel">
+        <h2>設定（おうちの人用）</h2>
+        <label class="row">
+          <span>じぶんの声の大きさ</span>
+          <input id="level-original" type="range" min="0" max="120" step="5">
+          <output id="level-original-value">70</output>
+        </label>
+        <label class="row">
+          <span>ハモリの大きさ</span>
+          <input id="level-harmony" type="range" min="0" max="120" step="5">
+          <output id="level-harmony-value">90</output>
+        </label>
+        <h3>ならべるハモリ</h3>
+        <div id="preset-list" class="preset-list"></div>
+        <p class="note">3度は曲のキーによって長・短が入れ替わるため、固定の3度はところどころ濁ります。設定は この端末だけに保存されます。</p>
+        <div class="settings-actions">
+          <button id="settings-reset" class="pill">はじめの設定にもどす</button>
+          <button id="settings-close" class="pill primary">とじる</button>
+        </div>
+      </div>
     </div>
 
     <!-- エラー -->
