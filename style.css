@@ -170,3 +170,22 @@ body {
 
 .version { position: fixed; bottom: max(8px, env(safe-area-inset-bottom)); left: 0; right: 0; text-align: center; font-size: 11px; opacity: 0.45; pointer-events: none; }
 .version-inline { font-size: 12px; font-weight: normal; opacity: 0.6; }
+
+/* きろく */
+.bottom-row { gap: 10px; flex-wrap: wrap; }
+.pill.star { font-size: 24px; padding: 8px 18px; color: #c9a200; }
+.pill.star.on { background: #fff3b0; }
+.screen.library { justify-content: flex-start; padding-top: 48px; }
+.library-title { margin: 0; font-size: 22px; }
+.library-list { width: 100%; max-width: 560px; display: flex; flex-direction: column; gap: 10px; flex: 1; overflow-y: auto; }
+.take {
+  display: grid; grid-template-columns: 56px 1fr auto auto; align-items: center; gap: 10px;
+  background: var(--panel); border-radius: 18px; padding: 10px 12px; box-shadow: var(--shadow);
+}
+.take .play-small { width: 56px; height: 56px; border-radius: 50%; border: none; background: var(--play); color: #fff; font-size: 24px; cursor: pointer; }
+.take .meta { display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+.take .meta small { opacity: 0.6; }
+.take .fav { border: none; background: transparent; font-size: 26px; color: #c9a200; cursor: pointer; padding: 6px; }
+.take .del { border: none; background: transparent; font-size: 18px; opacity: 0.4; cursor: pointer; padding: 6px; }
+.library-empty { text-align: center; opacity: 0.6; padding: 40px 0; }
+.library-section { font-size: 14px; opacity: 0.7; margin-top: 6px; }

@@ -5,6 +5,7 @@
 import { detectPitch } from './pitch.js';
 import { pitchShiftPSOLA, buildPitchMarks, matchLoudness, HARMONY_PRESETS, DEFAULT_PRESET_IDS } from './psola.js';
 import { APP_VERSION } from './version.js';
+import { listTakes, getTake, saveTake, setFavorite, updateEnabled, deleteTake, FAVORITE_MAX } from './store.js';
 
 const MAX_SECONDS = 20;
 const MIN_SECONDS = 0.5;
@@ -27,6 +28,12 @@ const el = {
   btnPlay: $('btn-play'),
   btnBack: $('btn-back'),
   btnSettings: $('btn-settings'),
+  btnLibrary: $('btn-library'),
+  btnLibrary2: $('btn-library2'),
+  btnLibraryBack: $('btn-library-back'),
+  btnFavorite: $('btn-favorite'),
+  screenLibrary: $('screen-library'),
+  libraryList: $('library-list'),
   meter: $('meter-bar'),
   timer: $('timer'),
   hint: $('record-hint'),
@@ -64,6 +71,8 @@ const state = {
   track: null,
   marks: null,
   duration: 0,
+  takeId: null,          // 保存済みテイクの id（保存失敗時は null）
+  takeFavorite: false,
   originalBuffer: null,
   harmonyBuffers: {},   // id → AudioBuffer（生成済みキャッシュ）
   enabled: {},          // id → bool（スイッチ状態）
@@ -123,6 +132,7 @@ const yieldToUI = () => new Promise((r) => setTimeout(r, 0));
 function showScreen(name) {
   el.screenRecord.classList.toggle('active', name === 'record');
   el.screenPlay.classList.toggle('active', name === 'play');
+  el.screenLibrary.classList.toggle('active', name === 'library');
 }
 
 async function ensureContext() {
@@ -235,6 +245,14 @@ async function stopRecording() {
 
   state.pcm = pcm;
   state.duration = pcm.length / state.sampleRate;
+  state.enabled = {};
+  state.takeId = null;
+  state.takeFavorite = false;
+  try {
+    state.takeId = await saveTake({ pcm, sampleRate: state.sampleRate, duration: state.duration, enabled: state.enabled });
+  } catch (e) {
+    console.warn('save failed', e);
+  }
   await processRecording();
 }
 
@@ -256,6 +274,7 @@ async function processRecording() {
 
   setBusy(false);
   buildSwitches();
+  updateFavoriteButton();
   showScreen('play');
   drawCanvas();
 }
@@ -344,6 +363,7 @@ function animatePlayhead() {
 
 function toggleHarmony(id) {
   state.enabled[id] = !state.enabled[id];
+  if (state.takeId) updateEnabled(state.takeId, state.enabled).catch(() => {});
   const btn = el.switches.querySelector(`[data-id="${id}"]`);
   if (btn) btn.classList.toggle('on', state.enabled[id]);
   if (state.playing && state.gains[id]) {
@@ -505,6 +525,107 @@ el.btnBack.addEventListener('click', () => {
   showScreen('record');
 });
 document.addEventListener('visibilitychange', () => { if (document.hidden) { stopPlayback(); if (state.recording) stopRecording(); } });
+
+// ---------- きろく（保存・一覧） ----------
+function updateFavoriteButton() {
+  el.btnFavorite.textContent = state.takeFavorite ? '★' : '☆';
+  el.btnFavorite.classList.toggle('on', state.takeFavorite);
+  el.btnFavorite.disabled = !state.takeId;
+}
+
+async function toggleFavorite() {
+  if (!state.takeId) return;
+  const next = !state.takeFavorite;
+  try {
+    const ok = await setFavorite(state.takeId, next);
+    if (!ok && next) { showError(`おきにいりは ${FAVORITE_MAX} こまで。どれか ★ を はずしてね`); return; }
+    state.takeFavorite = next;
+    updateFavoriteButton();
+  } catch (e) {
+    showError('ほぞんが できませんでした');
+  }
+}
+
+function formatDate(ts) {
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getMonth() + 1}/${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+async function openLibrary() {
+  stopPlayback();
+  showScreen('library');
+  el.libraryList.innerHTML = '';
+  let takes = [];
+  try { takes = await listTakes(); } catch (e) { showError('きろくを ひらけませんでした'); }
+  if (takes.length === 0) {
+    el.libraryList.innerHTML = '<div class="library-empty">まだ きろくが ないよ。うたってみよう！</div>';
+    return;
+  }
+  const favs = takes.filter((t) => t.favorite);
+  const recents = takes.filter((t) => !t.favorite);
+  const addSection = (title, items) => {
+    if (items.length === 0) return;
+    const h = document.createElement('div');
+    h.className = 'library-section';
+    h.textContent = title;
+    el.libraryList.appendChild(h);
+    for (const t of items) el.libraryList.appendChild(renderTake(t));
+  };
+  addSection('★ おきにいり', favs);
+  addSection('さいきん', recents);
+}
+
+function renderTake(t) {
+  const row = document.createElement('div');
+  row.className = 'take';
+  row.dataset.id = t.id;
+  const on = Object.values(t.enabled || {}).filter(Boolean).length;
+  row.innerHTML = `
+    <button class="play-small" aria-label="きく">▶</button>
+    <div class="meta"><span>${formatDate(t.createdAt)}</span><small>${Math.round(t.duration)} びょう ・ ハモリ ${on} こ</small></div>
+    <button class="fav" aria-label="おきにいり">${t.favorite ? '★' : '☆'}</button>
+    <button class="del" aria-label="けす">🗑</button>`;
+  row.querySelector('.play-small').addEventListener('click', () => loadTake(t.id));
+  row.querySelector('.fav').addEventListener('click', async (e) => {
+    const next = !t.favorite;
+    const ok = await setFavorite(t.id, next).catch(() => false);
+    if (!ok && next) { showError(`おきにいりは ${FAVORITE_MAX} こまで`); return; }
+    if (state.takeId === t.id) { state.takeFavorite = next; updateFavoriteButton(); }
+    openLibrary();
+  });
+  row.querySelector('.del').addEventListener('click', async () => {
+    // 削除は保護者の操作を想定（確認ダイアログ）
+    if (!window.confirm('この きろくを けしますか？（もとに もどせません）')) return;
+    await deleteTake(t.id).catch(() => {});
+    if (state.takeId === t.id) { state.takeId = null; state.takeFavorite = false; }
+    openLibrary();
+  });
+  return row;
+}
+
+async function loadTake(id) {
+  let take;
+  try { take = await getTake(id); } catch (e) { take = null; }
+  if (!take) { showError('この きろくは ひらけませんでした'); return; }
+  try { await ensureContext(); } catch (_) { showError('おとの じゅんびが できませんでした'); return; }
+  state.pcm = take.pcm;
+  state.sampleRate = take.sampleRate;
+  state.duration = take.duration;
+  state.enabled = { ...(take.enabled || {}) };
+  state.takeId = take.id;
+  state.takeFavorite = !!take.favorite;
+  await processRecording();
+}
+
+el.btnFavorite.addEventListener('click', toggleFavorite);
+el.btnLibrary.addEventListener('click', openLibrary);
+el.btnLibrary2.addEventListener('click', openLibrary);
+el.btnLibraryBack.addEventListener('click', () => {
+  el.hint.textContent = 'まるいボタンをおして、うたってね';
+  el.timer.textContent = '0';
+  showScreen('record');
+});
 
 // ---------- バージョン表示 ----------
 async function showVersion() {

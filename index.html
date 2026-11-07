@@ -19,6 +19,9 @@
       </button>
       <div class="meter" aria-hidden="true"><div id="meter-bar"></div></div>
       <div class="timer" id="timer">0</div>
+      <div class="bottom-row">
+        <button id="btn-library" class="pill" aria-label="きろく">📚 きろく</button>
+      </div>
       <div id="version" class="version"></div>
     </section>
 
@@ -30,7 +33,18 @@
       </div>
       <div class="switches" id="switches"></div>
       <div class="bottom-row">
+        <button id="btn-favorite" class="pill star" aria-label="おきにいり">☆</button>
         <button id="btn-back" class="pill" aria-label="もういちど録音">🎤 もういちど</button>
+        <button id="btn-library2" class="pill" aria-label="きろく">📚</button>
+      </div>
+    </section>
+
+    <!-- 画面3: きろく一覧 -->
+    <section id="screen-library" class="screen library">
+      <h2 class="library-title">きろく</h2>
+      <div id="library-list" class="library-list"></div>
+      <div class="bottom-row">
+        <button id="btn-library-back" class="pill" aria-label="もどる">🎤 うたう</button>
       </div>
     </section>
 
