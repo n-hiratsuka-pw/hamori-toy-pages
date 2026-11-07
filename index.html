@@ -19,6 +19,7 @@
       </button>
       <div class="meter" aria-hidden="true"><div id="meter-bar"></div></div>
       <div class="timer" id="timer">0</div>
+      <div id="version" class="version"></div>
     </section>
 
     <!-- 画面2: 再生・ハモリ -->
@@ -42,7 +43,7 @@
     <!-- 設定（保護者用） -->
     <div id="settings" class="settings" hidden>
       <div class="settings-panel">
-        <h2>設定（おうちの人用）</h2>
+        <h2>設定（おうちの人用） <small id="version-settings" class="version-inline"></small></h2>
         <label class="row">
           <span>じぶんの声の大きさ</span>
           <input id="level-original" type="range" min="0" max="120" step="5">

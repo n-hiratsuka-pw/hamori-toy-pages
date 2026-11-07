@@ -3,6 +3,8 @@
   --ink: #3a2e1f;
   --accent: #ff6b6b;
   --accent-dark: #e14e4e;
+  --record-idle: #4a90e2;      /* 録音していないとき: 青 */
+  --record-active: #ff3b3b;    /* 録音中: 赤 */
   --play: #4ecdc4;
   --play-dark: #37b0a7;
   --panel: #ffffff;
@@ -42,7 +44,7 @@ body {
   height: min(60vw, 240px);
   border-radius: 50%;
   border: none;
-  background: var(--accent);
+  background: var(--record-idle);
   box-shadow: var(--shadow);
   color: #fff;
   font-size: 96px;
@@ -53,7 +55,7 @@ body {
   transition: transform 0.08s ease;
 }
 .big-round:active { transform: translateY(4px); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.12); }
-.big-round.recording { background: var(--accent-dark); animation: pulse 1s infinite; }
+.big-round.recording { background: var(--record-active); animation: pulse 1s infinite; }
 .big-round.play { background: var(--play); width: min(36vw, 140px); height: min(36vw, 140px); font-size: 56px; }
 .big-round.play.playing { background: var(--play-dark); }
 .mic { filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.2)); }
@@ -165,3 +167,6 @@ body {
 .note { font-size: 12px; opacity: 0.7; line-height: 1.5; }
 .settings-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
 .pill.primary { background: var(--play); color: #fff; }
+
+.version { position: fixed; bottom: max(8px, env(safe-area-inset-bottom)); left: 0; right: 0; text-align: center; font-size: 11px; opacity: 0.45; pointer-events: none; }
+.version-inline { font-size: 12px; font-weight: normal; opacity: 0.6; }

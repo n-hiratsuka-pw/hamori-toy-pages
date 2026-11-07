@@ -4,6 +4,7 @@
 
 import { detectPitch } from './pitch.js';
 import { pitchShiftPSOLA, buildPitchMarks, matchLoudness, HARMONY_PRESETS, DEFAULT_PRESET_IDS } from './psola.js';
+import { APP_VERSION } from './version.js';
 
 const MAX_SECONDS = 20;
 const MIN_SECONDS = 0.5;
@@ -505,5 +506,22 @@ el.btnBack.addEventListener('click', () => {
 });
 document.addEventListener('visibilitychange', () => { if (document.hidden) { stopPlayback(); if (state.recording) stopRecording(); } });
 
+// ---------- バージョン表示 ----------
+async function showVersion() {
+  let text = `v${APP_VERSION}`;
+  try {
+    // 配信時に workflow が書き出す同一オリジンのファイル（ローカル実行時は無い）
+    const res = await fetch('./build.json', { cache: 'no-store' });
+    if (res.ok) {
+      const b = await res.json();
+      if (b.date) text += ` · ${b.date}`;
+      if (b.sha) text += ` · ${String(b.sha).slice(0, 7)}`;
+    }
+  } catch (_) { /* ローカル実行など */ }
+  $('version').textContent = text;
+  $('version-settings').textContent = text;
+}
+
 buildSwitches();
 showScreen('record');
+showVersion();
