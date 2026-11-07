@@ -34,6 +34,7 @@ const el = {
   btnFavorite: $('btn-favorite'),
   screenLibrary: $('screen-library'),
   libraryList: $('library-list'),
+  speeds: $('speeds'),
   meter: $('meter-bar'),
   timer: $('timer'),
   hint: $('record-hint'),
@@ -73,16 +74,26 @@ const state = {
   duration: 0,
   takeId: null,          // 保存済みテイクの id（保存失敗時は null）
   takeFavorite: false,
-  originalBuffer: null,
-  harmonyBuffers: {},   // id → AudioBuffer（生成済みキャッシュ）
+  speed: 1,              // 再生スピード（音程は変えない時間伸縮）
+  buffers: {},           // speedKey → { original: AudioBuffer, harmonies: { id → AudioBuffer } }
   enabled: {},          // id → bool（スイッチ状態）
   // 再生
   playing: false,
   sources: [],
   gains: {},
-  playStart: 0,
+  playStart: 0,      // ctx.currentTime 基準の開始時刻
+  playOffset: 0,     // 開始位置（伸縮後の秒）
   rafId: 0,
+  scrubLast: 0,
 };
+
+const SPEEDS = [
+  { value: 0.6, label: '🐢 ゆっくり' },
+  { value: 1, label: 'ふつう' },
+  { value: 1.5, label: '🐇 はやい' },
+];
+const speedKey = (v) => String(v);
+const playDuration = () => state.duration / state.speed;
 
 // ---------- 設定 ----------
 function loadSettings() {
@@ -257,39 +268,53 @@ async function stopRecording() {
 }
 
 // ---------- 解析・生成 ----------
-async function processRecording() {
+async function processRecording(autoplay = false) {
   setBusy(true, 'こえを しらべているよ…');
   await yieldToUI();
   const { pcm, sampleRate, ctx } = state;
   const t0 = performance.now();
   state.track = detectPitch(pcm, sampleRate);
   state.marks = buildPitchMarks(pcm, sampleRate, state.track);
-  state.harmonyBuffers = {};
-  state.originalBuffer = toAudioBuffer(ctx, pcm, sampleRate);
+  state.buffers = {};
+  state.speed = 1;
   await yieldToUI();
 
   setBusy(true, 'はもりを つくっているよ…');
-  await ensureHarmonies();
+  await ensureBuffers();
   console.log(`processing: ${(performance.now() - t0).toFixed(0)} ms for ${state.duration.toFixed(1)} s`);
 
   setBusy(false);
   buildSwitches();
+  buildSpeeds();
   updateFavoriteButton();
   showScreen('play');
   drawCanvas();
+  if (autoplay) startPlayback(0);
 }
 
-/** 設定で選ばれているハモリのうち未生成のものを生成する */
-async function ensureHarmonies() {
+/** 現在のスピードについて、原音と設定で選ばれているハモリのうち未生成のものを生成する */
+async function ensureBuffers() {
   const { pcm, sampleRate, ctx } = state;
+  const stretch = 1 / state.speed;
+  const key = speedKey(state.speed);
+  if (!state.buffers[key]) state.buffers[key] = { original: null, harmonies: {} };
+  const set = state.buffers[key];
+  if (!set.original) {
+    // ふつう（1.0）は原音そのまま。それ以外は音程を変えずに時間伸縮
+    const y = stretch === 1 ? pcm : pitchShiftPSOLA(pcm, sampleRate, state.track, 0, state.marks, stretch);
+    set.original = toAudioBuffer(ctx, y, sampleRate);
+    await yieldToUI();
+  }
   for (const p of activePresets()) {
-    if (state.harmonyBuffers[p.id]) continue;
-    const y = pitchShiftPSOLA(pcm, sampleRate, state.track, p.semitones, state.marks);
+    if (set.harmonies[p.id]) continue;
+    const y = pitchShiftPSOLA(pcm, sampleRate, state.track, p.semitones, state.marks, stretch);
     matchLoudness(pcm, y);
-    state.harmonyBuffers[p.id] = toAudioBuffer(ctx, y, sampleRate);
+    set.harmonies[p.id] = toAudioBuffer(ctx, y, sampleRate);
     await yieldToUI();
   }
 }
+
+function currentSet() { return state.buffers[speedKey(state.speed)]; }
 
 function toAudioBuffer(ctx, data, sampleRate) {
   const buf = ctx.createBuffer(1, data.length, sampleRate);
@@ -298,10 +323,13 @@ function toAudioBuffer(ctx, data, sampleRate) {
 }
 
 // ---------- 再生 ----------
-function startPlayback() {
+function startPlayback(offset = 0) {
   const ctx = state.ctx;
-  if (!state.originalBuffer) return;
-  stopPlayback();
+  const set = currentSet();
+  if (!set || !set.original) return;
+  stopPlayback(true);
+  const dur = playDuration();
+  offset = Math.max(0, Math.min(dur - 0.05, offset));
   const master = ctx.createGain();
   master.gain.value = 1;
   // 最終段はリミッター相当（重ね合わせ時の音割れ防止。通常の音量では動作しない）
@@ -324,41 +352,102 @@ function startPlayback() {
     g.gain.value = level;
     src.connect(g);
     g.connect(master);
-    src.start(when);
+    src.start(when, offset);
     state.sources.push(src);
     state.gains[id] = g;
     return src;
   };
-  const main = addVoice('original', state.originalBuffer, state.settings.levelOriginal);
+  const main = addVoice('original', set.original, state.settings.levelOriginal);
   for (const p of activePresets()) {
-    const buf = state.harmonyBuffers[p.id];
+    const buf = set.harmonies[p.id];
     if (buf) addVoice(p.id, buf, state.enabled[p.id] ? state.settings.levelHarmony : 0);
   }
-  main.onended = () => { if (state.playing) stopPlayback(); };
+  main.onended = () => { if (state.playing && state.sources.includes(main)) stopPlayback(); };
 
   state.playing = true;
   state.playStart = when;
+  state.playOffset = offset;
   el.btnPlay.classList.add('playing');
   el.btnPlay.querySelector('span').textContent = '■';
   animatePlayhead();
 }
 
-function stopPlayback() {
+function stopPlayback(silent = false) {
   if (!state.playing) return;
   state.playing = false;
   cancelAnimationFrame(state.rafId);
-  for (const s of state.sources) { try { s.stop(); } catch (_) { /* already stopped */ } }
+  for (const s of state.sources) { try { s.onended = null; s.stop(); } catch (_) { /* already stopped */ } }
   state.sources = [];
   state.gains = {};
   el.btnPlay.classList.remove('playing');
   el.btnPlay.querySelector('span').textContent = '▶';
-  drawCanvas();
+  if (!silent) drawCanvas();
+}
+
+function playheadTime() {
+  return state.playOffset + (state.ctx.currentTime - state.playStart);
 }
 
 function animatePlayhead() {
   if (!state.playing) return;
-  drawCanvas(state.ctx.currentTime - state.playStart);
+  drawCanvas(playheadTime());
   state.rafId = requestAnimationFrame(animatePlayhead);
+}
+
+/** 曲線上をタップ／ドラッグした位置から即再生（スクラブ） */
+function scrubTo(clientX) {
+  const rect = el.canvas.getBoundingClientRect();
+  const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+  startPlayback(ratio * playDuration());
+}
+
+el.canvas.addEventListener('pointerdown', (e) => {
+  if (!currentSet()) return;
+  e.preventDefault();
+  el.canvas.setPointerCapture(e.pointerId);
+  state.scrubbing = true;
+  state.scrubLast = performance.now();
+  scrubTo(e.clientX);
+});
+el.canvas.addEventListener('pointermove', (e) => {
+  if (!state.scrubbing) return;
+  const now = performance.now();
+  if (now - state.scrubLast < 120) return;  // 再生の再開始を 120 ms に間引く
+  state.scrubLast = now;
+  scrubTo(e.clientX);
+});
+const endScrub = () => { state.scrubbing = false; };
+el.canvas.addEventListener('pointerup', endScrub);
+el.canvas.addEventListener('pointercancel', endScrub);
+
+// ---------- スピード ----------
+function buildSpeeds() {
+  el.speeds.innerHTML = '';
+  for (const sp of SPEEDS) {
+    const b = document.createElement('button');
+    b.className = 'speed' + (sp.value === state.speed ? ' on' : '');
+    b.textContent = sp.label;
+    b.addEventListener('click', () => setSpeed(sp.value));
+    el.speeds.appendChild(b);
+  }
+}
+
+async function setSpeed(value) {
+  if (value === state.speed) return;
+  // 再生中なら同じ位置（元の録音上の位置）から続ける
+  const wasPlaying = state.playing;
+  const posOriginal = wasPlaying ? playheadTime() * state.speed : 0;
+  if (wasPlaying) stopPlayback(true);
+  state.speed = value;
+  buildSpeeds();
+  if (!currentSet() || !currentSet().original) {
+    setBusy(true, 'スピードを かえているよ…');
+    await yieldToUI();
+    await ensureBuffers();
+    setBusy(false);
+  }
+  drawCanvas();
+  if (wasPlaying) startPlayback(posOriginal / state.speed);
 }
 
 function toggleHarmony(id) {
@@ -404,8 +493,9 @@ function drawCanvas(playhead = -1) {
 
   const tr = state.track;
   if (!tr || tr.f0.length === 0) return;
-  const dur = state.duration;
+  const dur = playDuration();
   const xOf = (t) => (t / dur) * W;
+  const stretch = 1 / state.speed;
 
   const drawTrack = (semitones, color, width) => {
     const k = Math.pow(2, semitones / 12);
@@ -418,7 +508,7 @@ function drawCanvas(playhead = -1) {
     for (let i = 0; i < tr.f0.length; i++) {
       const f = tr.f0[i];
       if (f <= 0) { pen = false; continue; }
-      const x = xOf(tr.times[i]), y = yOf(f * k, H);
+      const x = xOf(tr.times[i] * stretch), y = yOf(f * k, H);
       if (!pen) { g.moveTo(x, y); pen = true; } else g.lineTo(x, y);
     }
     g.stroke();
@@ -487,8 +577,9 @@ async function closeSettings() {
   if (state.pcm) {
     const wasPlaying = state.playing;
     if (wasPlaying) stopPlayback();
-    const missing = activePresets().some((p) => !state.harmonyBuffers[p.id]);
-    if (missing) { setBusy(true, 'はもりを つくっているよ…'); await yieldToUI(); await ensureHarmonies(); setBusy(false); }
+    const set = currentSet();
+    const missing = !set || activePresets().some((p) => !set.harmonies[p.id]);
+    if (missing) { setBusy(true, 'はもりを つくっているよ…'); await yieldToUI(); await ensureBuffers(); setBusy(false); }
     buildSwitches();
     drawCanvas();
     if (wasPlaying) startPlayback();
@@ -517,7 +608,7 @@ el.settingsClose.addEventListener('click', closeSettings);
 el.btnSettings.addEventListener('click', openSettings);
 
 el.btnRecord.addEventListener('click', () => { state.recording ? stopRecording() : startRecording(); });
-el.btnPlay.addEventListener('click', () => { state.playing ? stopPlayback() : startPlayback(); });
+el.btnPlay.addEventListener('click', () => { state.playing ? stopPlayback() : startPlayback(0); });
 el.btnBack.addEventListener('click', () => {
   stopPlayback();
   el.hint.textContent = 'まるいボタンをおして、うたってね';
@@ -586,7 +677,8 @@ function renderTake(t) {
     <div class="meta"><span>${formatDate(t.createdAt)}</span><small>${Math.round(t.duration)} びょう ・ ハモリ ${on} こ</small></div>
     <button class="fav" aria-label="おきにいり">${t.favorite ? '★' : '☆'}</button>
     <button class="del" aria-label="けす">🗑</button>`;
-  row.querySelector('.play-small').addEventListener('click', () => loadTake(t.id));
+  // 行のどこを押しても即再生（★・🗑 は除く）
+  row.addEventListener('click', (e) => { if (e.target.closest('.fav, .del')) return; loadTake(t.id); });
   row.querySelector('.fav').addEventListener('click', async (e) => {
     const next = !t.favorite;
     const ok = await setFavorite(t.id, next).catch(() => false);
@@ -615,7 +707,7 @@ async function loadTake(id) {
   state.enabled = { ...(take.enabled || {}) };
   state.takeId = take.id;
   state.takeFavorite = !!take.favorite;
-  await processRecording();
+  await processRecording(true);
 }
 
 el.btnFavorite.addEventListener('click', toggleFavorite);

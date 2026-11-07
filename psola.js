@@ -60,20 +60,23 @@ function getWindow(len) {
  * @param {object} track detectPitch の戻り値
  * @param {number} semitones 半音数（+12 = 1 オクターブ上）
  * @param {Array} [marks] buildPitchMarks の結果（省略時は内部で生成）
+ * @param {number} [stretch=1] 時間伸縮率（出力長 = 入力長 × stretch。音程は変えない。0.5〜2 を想定）
  */
-export function pitchShiftPSOLA(pcm, sampleRate, track, semitones, marks) {
-  const n = pcm.length;
+export function pitchShiftPSOLA(pcm, sampleRate, track, semitones, marks, stretch = 1) {
+  const nIn = pcm.length;
+  const n = Math.round(nIn * stretch);
   const alpha = Math.pow(2, semitones / 12);
   const inMarks = marks || buildPitchMarks(pcm, sampleRate, track);
   const acc = new Float32Array(n);
   const norm = new Float32Array(n);
   if (inMarks.length === 0) return new Float32Array(pcm);
 
-  let tOut = inMarks[0].pos;
+  let tOut = inMarks[0].pos * stretch;
   let mi = 0;
   while (tOut < n) {
-    // tOut に最も近い入力マークを探す（単調に進むのでポインタを進める）
-    while (mi + 1 < inMarks.length && Math.abs(inMarks[mi + 1].pos - tOut) <= Math.abs(inMarks[mi].pos - tOut)) mi++;
+    // 出力時刻に対応する入力時刻に最も近い入力マークを探す（単調に進むのでポインタを進める）
+    const tIn = tOut / stretch;
+    while (mi + 1 < inMarks.length && Math.abs(inMarks[mi + 1].pos - tIn) <= Math.abs(inMarks[mi].pos - tIn)) mi++;
     const m = inMarks[mi];
     const Tin = Math.max(2, Math.round(m.T));
     const len = 2 * Tin + 1;
@@ -82,7 +85,7 @@ export function pitchShiftPSOLA(pcm, sampleRate, track, semitones, marks) {
     for (let k = 0; k < len; k++) {
       const src = m.pos - Tin + k;
       const dst = center - Tin + k;
-      if (src < 0 || src >= n || dst < 0 || dst >= n) continue;
+      if (src < 0 || src >= nIn || dst < 0 || dst >= n) continue;
       acc[dst] += pcm[src] * win[k];
       norm[dst] += win[k];
     }

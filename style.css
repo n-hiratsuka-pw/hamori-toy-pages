@@ -3,8 +3,8 @@
   --ink: #3a2e1f;
   --accent: #ff6b6b;
   --accent-dark: #e14e4e;
-  --record-idle: #4a90e2;      /* 録音していないとき: 青 */
-  --record-active: #ff3b3b;    /* 録音中: 赤 */
+  --record-idle: #ff6b6b;      /* 録音していないとき: 赤（v0.3.1 の青は実機評価で元に戻した） */
+  --record-active: #e14e4e;    /* 録音中: 濃い赤＋脈動 */
   --play: #4ecdc4;
   --play-dark: #37b0a7;
   --panel: #ffffff;
@@ -71,6 +71,8 @@ body {
 .timer { font-size: 28px; font-variant-numeric: tabular-nums; opacity: 0.7; }
 
 #pitch-canvas {
+  touch-action: none;
+  cursor: pointer;
   width: 100%;
   max-width: 900px;
   height: auto;
@@ -189,3 +191,8 @@ body {
 .take .del { border: none; background: transparent; font-size: 18px; opacity: 0.4; cursor: pointer; padding: 6px; }
 .library-empty { text-align: center; opacity: 0.6; padding: 40px 0; }
 .library-section { font-size: 14px; opacity: 0.7; margin-top: 6px; }
+
+/* スピード */
+.speeds { display: flex; gap: 10px; justify-content: center; }
+.speed { border: none; border-radius: 999px; padding: 10px 16px; font-size: 18px; background: var(--panel); color: var(--ink); box-shadow: var(--shadow); opacity: 0.55; cursor: pointer; }
+.speed.on { opacity: 1; background: #e0f7f5; }
