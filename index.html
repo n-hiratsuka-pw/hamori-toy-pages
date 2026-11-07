@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#fff7e6">
+  <title>はもり</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <main id="app">
+    <!-- 画面1: 録音 -->
+    <section id="screen-record" class="screen active">
+      <div class="hint" id="record-hint">まるいボタンをおして、うたってね</div>
+      <button id="btn-record" class="big-round" aria-label="録音">
+        <span class="mic">🎤</span>
+      </button>
+      <div class="meter" aria-hidden="true"><div id="meter-bar"></div></div>
+      <div class="timer" id="timer">0</div>
+    </section>
+
+    <!-- 画面2: 再生・ハモリ -->
+    <section id="screen-play" class="screen">
+      <canvas id="pitch-canvas" width="900" height="360"></canvas>
+      <div class="controls">
+        <button id="btn-play" class="big-round play" aria-label="再生"><span>▶</span></button>
+      </div>
+      <div class="switches" id="switches"></div>
+      <div class="bottom-row">
+        <button id="btn-back" class="pill" aria-label="もういちど録音">🎤 もういちど</button>
+      </div>
+    </section>
+
+    <!-- 処理中オーバーレイ -->
+    <div id="busy" class="busy" hidden>
+      <div class="spinner"></div>
+      <div id="busy-text">おとを つくっているよ…</div>
+    </div>
+
+    <!-- エラー -->
+    <div id="error" class="error" hidden></div>
+  </main>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

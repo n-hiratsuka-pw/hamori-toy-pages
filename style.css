@@ -1,0 +1,141 @@
+:root {
+  --bg: #fff7e6;
+  --ink: #3a2e1f;
+  --accent: #ff6b6b;
+  --accent-dark: #e14e4e;
+  --play: #4ecdc4;
+  --play-dark: #37b0a7;
+  --panel: #ffffff;
+  --shadow: 0 8px 0 rgba(0, 0, 0, 0.12);
+  --c-up8: #ffb703;
+  --c-up5: #fb8500;
+  --c-down5: #8ecae6;
+  --c-down8: #219ebc;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: "Hiragino Maru Gothic ProN", "Rounded Mplus 1c", "Noto Sans JP", system-ui, sans-serif;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+  overscroll-behavior: none;
+}
+
+#app {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom));
+}
+
+.screen { display: none; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 20px; }
+.screen.active { display: flex; }
+
+.hint { font-size: 20px; text-align: center; min-height: 1.5em; }
+
+.big-round {
+  width: min(60vw, 240px);
+  height: min(60vw, 240px);
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  box-shadow: var(--shadow);
+  color: #fff;
+  font-size: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: transform 0.08s ease;
+}
+.big-round:active { transform: translateY(4px); box-shadow: 0 4px 0 rgba(0, 0, 0, 0.12); }
+.big-round.recording { background: var(--accent-dark); animation: pulse 1s infinite; }
+.big-round.play { background: var(--play); width: min(36vw, 140px); height: min(36vw, 140px); font-size: 56px; }
+.big-round.play.playing { background: var(--play-dark); }
+.mic { filter: drop-shadow(0 2px 0 rgba(0, 0, 0, 0.2)); }
+
+@keyframes pulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.06); }
+  100% { transform: scale(1); }
+}
+
+.meter { width: min(60vw, 240px); height: 14px; border-radius: 7px; background: rgba(0, 0, 0, 0.08); overflow: hidden; }
+#meter-bar { width: 0%; height: 100%; background: linear-gradient(90deg, #4ecdc4, #ffb703, #ff6b6b); transition: width 0.05s linear; }
+.timer { font-size: 28px; font-variant-numeric: tabular-nums; opacity: 0.7; }
+
+#pitch-canvas {
+  width: 100%;
+  max-width: 900px;
+  height: auto;
+  aspect-ratio: 900 / 360;
+  background: var(--panel);
+  border-radius: 20px;
+  box-shadow: var(--shadow);
+}
+
+.controls { display: flex; justify-content: center; }
+
+.switches {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  width: 100%;
+  max-width: 900px;
+}
+.switch {
+  border: none;
+  border-radius: 20px;
+  padding: 14px 6px 10px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  opacity: 0.55;
+  transition: transform 0.08s ease, opacity 0.15s ease;
+  color: var(--ink);
+}
+.switch .icon { font-size: 44px; line-height: 1; }
+.switch .label { font-size: 13px; }
+.switch .lamp { width: 100%; height: 10px; border-radius: 5px; background: rgba(0, 0, 0, 0.1); }
+.switch.on { opacity: 1; transform: translateY(-2px); }
+.switch.on .lamp { background: var(--lamp); }
+.switch:active { transform: translateY(3px); }
+
+.bottom-row { display: flex; justify-content: center; }
+.pill {
+  border: none; border-radius: 999px; padding: 12px 22px; font-size: 18px;
+  background: var(--panel); color: var(--ink); box-shadow: var(--shadow); cursor: pointer;
+}
+
+.busy {
+  position: fixed; inset: 0; background: rgba(255, 247, 230, 0.92);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 20px;
+  font-size: 22px; z-index: 10;
+}
+.busy[hidden] { display: none; }
+.spinner {
+  width: 72px; height: 72px; border-radius: 50%;
+  border: 10px solid rgba(0, 0, 0, 0.1); border-top-color: var(--accent);
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.error {
+  position: fixed; left: 16px; right: 16px; bottom: 16px;
+  background: #fff; color: #b00020; border-radius: 16px; padding: 14px 18px; box-shadow: var(--shadow);
+  font-size: 15px; z-index: 11;
+}
+.error[hidden] { display: none; }
+
+@media (max-width: 420px) {
+  .switch .icon { font-size: 36px; }
+  .switch .label { font-size: 11px; }
+}
