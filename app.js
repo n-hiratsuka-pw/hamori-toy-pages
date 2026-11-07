@@ -22,14 +22,11 @@ const PRESET_BY_ID = Object.fromEntries(HARMONY_PRESETS.map((p) => [p.id, p]));
 
 const $ = (id) => document.getElementById(id);
 const el = {
-  screenRecord: $('screen-record'),
-  screenPlay: $('screen-play'),
+  screenMain: $('screen-main'),
   btnRecord: $('btn-record'),
   btnPlay: $('btn-play'),
-  btnBack: $('btn-back'),
   btnSettings: $('btn-settings'),
   btnLibrary: $('btn-library'),
-  btnLibrary2: $('btn-library2'),
   btnLibraryBack: $('btn-library-back'),
   btnFavorite: $('btn-favorite'),
   screenLibrary: $('screen-library'),
@@ -83,8 +80,11 @@ const state = {
   gains: {},
   playStart: 0,      // ctx.currentTime 基準の開始時刻
   playOffset: 0,     // 開始位置（伸縮後の秒）
+  live: [],          // 録音中のリアルタイムピッチ [{t, f}]
+  liveRange: null,
+  viewTime: 0,       // 停止中に表示している「いま」の時刻
+  liveTail: new Float32Array(0),
   rafId: 0,
-  scrubLast: 0,
 };
 
 const SPEEDS = [
@@ -141,9 +141,8 @@ function setBusy(on, text) {
 const yieldToUI = () => new Promise((r) => setTimeout(r, 0));
 
 function showScreen(name) {
-  el.screenRecord.classList.toggle('active', name === 'record');
-  el.screenPlay.classList.toggle('active', name === 'play');
-  el.screenLibrary.classList.toggle('active', name === 'library');
+  // メインは常時表示。きろくはシートとして重ねる
+  el.screenLibrary.hidden = name !== 'library';
 }
 
 async function ensureContext() {
@@ -166,6 +165,7 @@ async function ensureContext() {
 // ---------- 録音 ----------
 async function startRecording() {
   if (state.recording) return;
+  stopPlayback();
   let ctx;
   try {
     ctx = await ensureContext();
@@ -197,13 +197,13 @@ async function startRecording() {
 
   if (state.workletReady) {
     const node = new AudioWorkletNode(ctx, 'recorder-processor', { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1 });
-    node.port.onmessage = (e) => { if (state.recording) state.chunks.push(e.data); };
+    node.port.onmessage = (e) => { if (state.recording) { state.chunks.push(e.data); pushLiveTail(e.data); } };
     state.srcNode.connect(node);
     node.connect(silent);
     state.recNode = node;
   } else {
     const node = ctx.createScriptProcessor(4096, 1, 1);
-    node.onaudioprocess = (e) => { if (state.recording) state.chunks.push(new Float32Array(e.inputBuffer.getChannelData(0))); };
+    node.onaudioprocess = (e) => { if (state.recording) { const c = new Float32Array(e.inputBuffer.getChannelData(0)); state.chunks.push(c); pushLiveTail(c); } };
     state.srcNode.connect(node);
     node.connect(silent);
     state.recNode = node;
@@ -211,7 +211,11 @@ async function startRecording() {
 
   state.recording = true;
   state.recStart = performance.now();
+  state.live = [];
+  state.liveRange = null;
+  state.liveTail = new Float32Array(0);
   el.btnRecord.classList.add('recording');
+  el.btnPlay.disabled = true;
   el.hint.textContent = 'うたったら もういちど おしてね';
   tickRecording();
 }
@@ -225,8 +229,26 @@ function tickRecording() {
   let peak = 0;
   for (let i = 0; i < buf.length; i++) peak = Math.max(peak, Math.abs(buf[i] - 128) / 128);
   el.meter.style.width = `${Math.min(100, peak * 160)}%`;
+  // リアルタイムのピッチ（直近 50 ms 分だけ解析して 1 点追加）
+  if (state.liveTail.length >= LIVE_WINDOW) {
+    const slice = state.liveTail.subarray(state.liveTail.length - LIVE_WINDOW);
+    const r = detectPitch(slice, state.sampleRate);
+    const f = r.f0.length ? r.f0[r.f0.length - 1] : 0;
+    state.live.push({ t: sec, f });
+    drawCanvas();
+  }
   if (sec >= MAX_SECONDS) { stopRecording(); return; }
   state.timerId = requestAnimationFrame(tickRecording);
+}
+
+const LIVE_WINDOW = 4096;  // 48 kHz で約 85 ms（解析用 16 kHz に間引いて 1 フレーム分）
+function pushLiveTail(chunk) {
+  const keep = LIVE_WINDOW * 2;
+  const merged = new Float32Array(Math.min(keep, state.liveTail.length + chunk.length));
+  const fromTail = Math.max(0, merged.length - chunk.length);
+  merged.set(state.liveTail.subarray(state.liveTail.length - fromTail), 0);
+  merged.set(chunk.subarray(Math.max(0, chunk.length - merged.length)), fromTail);
+  state.liveTail = merged;
 }
 
 async function stopRecording() {
@@ -235,6 +257,7 @@ async function stopRecording() {
   cancelAnimationFrame(state.timerId);
   el.btnRecord.classList.remove('recording');
   el.meter.style.width = '0%';
+  el.btnPlay.disabled = !currentSet();
   try { state.recNode.port?.postMessage('stop'); } catch (_) { /* ScriptProcessor */ }
   try { state.srcNode.disconnect(); state.recNode.disconnect(); state.analyser.disconnect(); } catch (_) { /* noop */ }
   state.stream.getTracks().forEach((t) => t.stop());
@@ -249,6 +272,8 @@ async function stopRecording() {
   if (pcm.length < MIN_SECONDS * state.sampleRate) {
     el.hint.textContent = 'もうすこし ながく うたってみてね';
     el.timer.textContent = '0';
+    state.live = [];
+    drawCanvas();
     return;
   }
   const fade = Math.min(Math.round(0.01 * state.sampleRate), Math.floor(pcm.length / 4));
@@ -287,7 +312,10 @@ async function processRecording(autoplay = false) {
   buildSwitches();
   buildSpeeds();
   updateFavoriteButton();
-  showScreen('play');
+  el.btnPlay.disabled = false;
+  el.hint.textContent = 'スイッチを おして、▶ で きいてね';
+  state.live = [];
+  showScreen('main');
   drawCanvas();
   if (autoplay) startPlayback(0);
 }
@@ -381,6 +409,7 @@ function stopPlayback(silent = false) {
   state.gains = {};
   el.btnPlay.classList.remove('playing');
   el.btnPlay.querySelector('span').textContent = '▶';
+  state.viewTime = 0;
   if (!silent) drawCanvas();
 }
 
@@ -390,33 +419,49 @@ function playheadTime() {
 
 function animatePlayhead() {
   if (!state.playing) return;
-  drawCanvas(playheadTime());
+  drawCanvas();
   state.rafId = requestAnimationFrame(animatePlayhead);
 }
 
-/** 曲線上をタップ／ドラッグした位置から即再生（スクラブ） */
-function scrubTo(clientX) {
-  const rect = el.canvas.getBoundingClientRect();
-  const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-  startPlayback(ratio * playDuration());
-}
-
+/** 曲線をドラッグすると時間が動き（指で曲線を送る）、タップするとカーソル位置から再生 */
+let scrub = null;
 el.canvas.addEventListener('pointerdown', (e) => {
-  if (!currentSet()) return;
+  if (!currentSet() || state.recording) return;
   e.preventDefault();
   el.canvas.setPointerCapture(e.pointerId);
-  state.scrubbing = true;
-  state.scrubLast = performance.now();
-  scrubTo(e.clientX);
+  const wasPlaying = state.playing;
+  const t0 = wasPlaying ? playheadTime() : state.viewTime;
+  if (wasPlaying) stopPlayback(true);
+  scrub = { x0: e.clientX, t0, moved: false, wasPlaying, last: 0 };
+  state.viewTime = t0;
+  drawCanvas();
 });
 el.canvas.addEventListener('pointermove', (e) => {
-  if (!state.scrubbing) return;
+  if (!scrub) return;
+  const rect = el.canvas.getBoundingClientRect();
+  const dx = e.clientX - scrub.x0;
+  if (Math.abs(dx) > 6) scrub.moved = true;
+  if (!scrub.moved) return;
+  const t = Math.max(0, Math.min(playDuration() - 0.05, scrub.t0 - (dx / rect.width) * VIEW_SECONDS));
+  state.viewTime = t;
+  drawCanvas();
+  // 送りながら音も鳴らす（120 ms 間隔で短く）
   const now = performance.now();
-  if (now - state.scrubLast < 120) return;  // 再生の再開始を 120 ms に間引く
-  state.scrubLast = now;
-  scrubTo(e.clientX);
+  if (now - scrub.last > 120) { scrub.last = now; startPlayback(t); state.playing && stopPlaybackSoon(); }
 });
-const endScrub = () => { state.scrubbing = false; };
+function stopPlaybackSoon() {
+  clearTimeout(stopPlaybackSoon._t);
+  stopPlaybackSoon._t = setTimeout(() => { if (scrub && state.playing) { const t = playheadTime(); stopPlayback(true); state.viewTime = t; drawCanvas(); } }, 140);
+}
+const endScrub = () => {
+  if (!scrub) return;
+  const s = scrub; scrub = null;
+  clearTimeout(stopPlaybackSoon._t);
+  if (state.playing) stopPlayback(true);
+  if (!s.moved) startPlayback(s.t0);          // タップ: カーソル位置から再生
+  else if (s.wasPlaying) startPlayback(state.viewTime); // 再生中に送った: その位置から再開
+  else drawCanvas();
+};
 el.canvas.addEventListener('pointerup', endScrub);
 el.canvas.addEventListener('pointercancel', endScrub);
 
@@ -446,6 +491,7 @@ async function setSpeed(value) {
     await ensureBuffers();
     setBusy(false);
   }
+  state.viewTime = 0;
   drawCanvas();
   if (wasPlaying) startPlayback(posOriginal / state.speed);
 }
@@ -472,57 +518,108 @@ function applyLevelsLive() {
   }
 }
 
-// ---------- 可視化 ----------
-const F_LO = 80, F_HI = 1600;
-function yOf(f, h) {
-  const r = (Math.log2(f) - Math.log2(F_LO)) / (Math.log2(F_HI) - Math.log2(F_LO));
-  return h - r * h;
+// ---------- 可視化（横に流れるピッチ曲線） ----------
+const VIEW_SECONDS = 4;      // 画面に見える時間幅
+const CURSOR_RATIO = 0.35;   // 「いま」の位置（左から 35%）
+const F_LO_DEFAULT = 150, F_HI_DEFAULT = 800;
+
+/** 表示する周波数レンジ（対数）。曲線が画面いっぱいに大きく見えるように絞る */
+function computeRange() {
+  let vals = [];
+  if (state.recording) vals = state.live.filter((p) => p.f > 0).map((p) => p.f);
+  else if (state.track) vals = Array.from(state.track.f0).filter((f) => f > 0);
+  if (vals.length < 5) return { lo: F_LO_DEFAULT, hi: F_HI_DEFAULT };
+  vals.sort((x, y) => x - y);
+  let lo = vals[Math.floor(vals.length * 0.05)];
+  let hi = vals[Math.floor(vals.length * 0.95)];
+  // ON のハモリの分だけ広げる
+  if (!state.recording) {
+    let minShift = 0, maxShift = 0;
+    for (const p of activePresets()) if (state.enabled[p.id]) { minShift = Math.min(minShift, p.semitones); maxShift = Math.max(maxShift, p.semitones); }
+    lo *= Math.pow(2, minShift / 12);
+    hi *= Math.pow(2, maxShift / 12);
+  }
+  // 余白 2 半音、最小幅 12 半音
+  lo *= Math.pow(2, -2 / 12); hi *= Math.pow(2, 2 / 12);
+  const span = Math.log2(hi / lo);
+  if (span < 1) { const c = Math.sqrt(lo * hi); lo = c / Math.SQRT2; hi = c * Math.SQRT2; }
+  // 録音中はレンジが縮まないようにする（線が揺れないため）
+  if (state.recording && state.liveRange) {
+    lo = Math.min(lo, state.liveRange.lo); hi = Math.max(hi, state.liveRange.hi);
+    state.liveRange = { lo, hi };
+  } else if (state.recording) state.liveRange = { lo, hi };
+  return { lo, hi };
 }
 
-function drawCanvas(playhead = -1) {
+function makeYOf(range, H) {
+  const l = Math.log2(range.lo), h = Math.log2(range.hi);
+  return (f) => H - ((Math.log2(f) - l) / (h - l)) * H;
+}
+
+/** 現在の「いま」の時刻（表示用）。録音中は経過秒、再生中は再生位置、停止中は viewTime */
+function nowTime() {
+  if (state.recording) return (performance.now() - state.recStart) / 1000;
+  if (state.playing) return playheadTime();
+  return state.viewTime;
+}
+
+function drawCanvas() {
   const cv = el.canvas;
   const g = cv.getContext('2d');
   const W = cv.width, H = cv.height;
   g.clearRect(0, 0, W, H);
 
-  for (let f = 100; f < F_HI; f *= 2) {
-    const y1 = yOf(f, H), y2 = yOf(f * 2, H);
-    g.fillStyle = 'rgba(0,0,0,0.03)';
-    g.fillRect(0, y2, W, y1 - y2);
+  const range = computeRange();
+  const yOf = makeYOf(range, H);
+  const now = nowTime();
+  const t0 = now - VIEW_SECONDS * CURSOR_RATIO;
+  const xOf = (t) => ((t - t0) / VIEW_SECONDS) * W;
+
+  // 半音ごとの薄い横線、オクターブ（C 相当）は少し濃く
+  const semLo = Math.ceil(12 * Math.log2(range.lo / 16.3516)), semHi = Math.floor(12 * Math.log2(range.hi / 16.3516));
+  for (let s = semLo; s <= semHi; s++) {
+    const f = 16.3516 * Math.pow(2, s / 12);
+    g.strokeStyle = s % 12 === 0 ? 'rgba(0,0,0,0.12)' : 'rgba(0,0,0,0.04)';
+    g.lineWidth = 1;
+    g.beginPath(); g.moveTo(0, yOf(f)); g.lineTo(W, yOf(f)); g.stroke();
   }
+  // 過去側をうっすら
+  g.fillStyle = 'rgba(0,0,0,0.025)';
+  g.fillRect(0, 0, W * CURSOR_RATIO, H);
 
-  const tr = state.track;
-  if (!tr || tr.f0.length === 0) return;
-  const dur = playDuration();
-  const xOf = (t) => (t / dur) * W;
-  const stretch = 1 / state.speed;
-
-  const drawTrack = (semitones, color, width) => {
-    const k = Math.pow(2, semitones / 12);
-    g.strokeStyle = color;
-    g.lineWidth = width;
-    g.lineCap = 'round';
-    g.lineJoin = 'round';
+  const drawPolyline = (points, color, width) => {
+    g.strokeStyle = color; g.lineWidth = width; g.lineCap = 'round'; g.lineJoin = 'round';
     g.beginPath();
     let pen = false;
-    for (let i = 0; i < tr.f0.length; i++) {
-      const f = tr.f0[i];
-      if (f <= 0) { pen = false; continue; }
-      const x = xOf(tr.times[i] * stretch), y = yOf(f * k, H);
+    for (const pt of points) {
+      if (pt.f <= 0) { pen = false; continue; }
+      const x = xOf(pt.t);
+      if (x < -20 || x > W + 20) { pen = false; continue; }
+      const y = yOf(pt.f);
       if (!pen) { g.moveTo(x, y); pen = true; } else g.lineTo(x, y);
     }
     g.stroke();
   };
 
-  for (const p of activePresets()) if (state.enabled[p.id]) drawTrack(p.semitones, p.color, 6);
-  drawTrack(0, '#3a2e1f', 8);
-
-  if (playhead >= 0) {
-    const x = xOf(Math.min(dur, Math.max(0, playhead)));
-    g.strokeStyle = 'rgba(255,107,107,0.9)';
-    g.lineWidth = 4;
-    g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke();
+  if (state.recording) {
+    drawPolyline(state.live, '#ff6b6b', 14);
+  } else if (state.track && state.track.f0.length) {
+    const tr = state.track;
+    const stretch = 1 / state.speed;
+    const pts = (k) => {
+      const arr = [];
+      for (let i = 0; i < tr.f0.length; i++) arr.push({ t: tr.times[i] * stretch, f: tr.f0[i] * k });
+      return arr;
+    };
+    for (const p of activePresets()) if (state.enabled[p.id]) drawPolyline(pts(Math.pow(2, p.semitones / 12)), p.color, 9);
+    drawPolyline(pts(1), '#3a2e1f', 14);
   }
+
+  // 「いま」のカーソル
+  const cx = W * CURSOR_RATIO;
+  g.strokeStyle = state.recording ? 'rgba(255,59,59,0.9)' : 'rgba(78,205,196,0.95)';
+  g.lineWidth = 5;
+  g.beginPath(); g.moveTo(cx, 0); g.lineTo(cx, H); g.stroke();
 }
 
 // ---------- UI 組み立て ----------
@@ -609,12 +706,7 @@ el.btnSettings.addEventListener('click', openSettings);
 
 el.btnRecord.addEventListener('click', () => { state.recording ? stopRecording() : startRecording(); });
 el.btnPlay.addEventListener('click', () => { state.playing ? stopPlayback() : startPlayback(0); });
-el.btnBack.addEventListener('click', () => {
-  stopPlayback();
-  el.hint.textContent = 'まるいボタンをおして、うたってね';
-  el.timer.textContent = '0';
-  showScreen('record');
-});
+
 document.addEventListener('visibilitychange', () => { if (document.hidden) { stopPlayback(); if (state.recording) stopRecording(); } });
 
 // ---------- きろく（保存・一覧） ----------
@@ -712,12 +804,7 @@ async function loadTake(id) {
 
 el.btnFavorite.addEventListener('click', toggleFavorite);
 el.btnLibrary.addEventListener('click', openLibrary);
-el.btnLibrary2.addEventListener('click', openLibrary);
-el.btnLibraryBack.addEventListener('click', () => {
-  el.hint.textContent = 'まるいボタンをおして、うたってね';
-  el.timer.textContent = '0';
-  showScreen('record');
-});
+el.btnLibraryBack.addEventListener('click', () => showScreen('main'));
 
 // ---------- バージョン表示 ----------
 async function showVersion() {
@@ -736,5 +823,5 @@ async function showVersion() {
 }
 
 buildSwitches();
-showScreen('record');
+showScreen('main');
 showVersion();

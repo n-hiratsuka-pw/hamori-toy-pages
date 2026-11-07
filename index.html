@@ -11,43 +11,34 @@
 <body>
   <main id="app">
     <button id="btn-settings" class="gear" aria-label="設定（保護者用）">⚙</button>
-    <!-- 画面1: 録音 -->
-    <section id="screen-record" class="screen active">
+    <!-- メイン画面（録音・再生・ハモリをすべてここで） -->
+    <section id="screen-main" class="screen active">
       <div class="hint" id="record-hint">まるいボタンをおして、うたってね</div>
-      <button id="btn-record" class="big-round" aria-label="録音">
-        <span class="mic">🎤</span>
-      </button>
-      <div class="meter" aria-hidden="true"><div id="meter-bar"></div></div>
-      <div class="timer" id="timer">0</div>
+      <canvas id="pitch-canvas" width="900" height="440"></canvas>
+      <div class="controls main-controls">
+        <button id="btn-record" class="big-round" aria-label="録音"><span class="mic">🎤</span></button>
+        <div class="rec-status">
+          <div class="meter" aria-hidden="true"><div id="meter-bar"></div></div>
+          <div class="timer" id="timer">0</div>
+        </div>
+        <button id="btn-play" class="big-round play" aria-label="再生" disabled><span>▶</span></button>
+      </div>
+      <div class="switches" id="switches"></div>
+      <div class="speeds" id="speeds"></div>
       <div class="bottom-row">
+        <button id="btn-favorite" class="pill star" aria-label="おきにいり" disabled>☆</button>
         <button id="btn-library" class="pill" aria-label="きろく">📚 きろく</button>
       </div>
       <div id="version" class="version"></div>
     </section>
 
-    <!-- 画面2: 再生・ハモリ -->
-    <section id="screen-play" class="screen">
-      <canvas id="pitch-canvas" width="900" height="360"></canvas>
-      <div class="controls">
-        <button id="btn-play" class="big-round play" aria-label="再生"><span>▶</span></button>
+    <!-- きろく一覧（シート） -->
+    <div id="screen-library" class="sheet" hidden>
+      <div class="sheet-panel">
+        <div class="sheet-head"><h2 class="library-title">きろく</h2><button id="btn-library-back" class="pill" aria-label="とじる">とじる</button></div>
+        <div id="library-list" class="library-list"></div>
       </div>
-      <div class="switches" id="switches"></div>
-      <div class="speeds" id="speeds"></div>
-      <div class="bottom-row">
-        <button id="btn-favorite" class="pill star" aria-label="おきにいり">☆</button>
-        <button id="btn-back" class="pill" aria-label="もういちど録音">🎤 もういちど</button>
-        <button id="btn-library2" class="pill" aria-label="きろく">📚</button>
-      </div>
-    </section>
-
-    <!-- 画面3: きろく一覧 -->
-    <section id="screen-library" class="screen library">
-      <h2 class="library-title">きろく</h2>
-      <div id="library-list" class="library-list"></div>
-      <div class="bottom-row">
-        <button id="btn-library-back" class="pill" aria-label="もどる">🎤 うたう</button>
-      </div>
-    </section>
+    </div>
 
     <!-- 処理中オーバーレイ -->
     <div id="busy" class="busy" hidden>
