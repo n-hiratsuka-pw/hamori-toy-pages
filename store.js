@@ -3,7 +3,7 @@
 // 設計（docs/03_設計書.md §7）
 //  - 録音のたびに自動保存（「さいきん」）。favorite=false の件数が RECENT_MAX を超えたら古い順に削除
 //  - ⭐ で favorite=true にすると自動削除の対象外。favorite は FAVORITE_MAX まで
-//  - PCM は Int16 で保存（20 秒・48 kHz で約 1.9 MB／件）
+//  - PCM は Int16 で保存（30 秒・48 kHz で約 2.9 MB／件）
 //  - 端末の外へは出ない。ブラウザのサイトデータ消去で消える
 
 const DB_NAME = 'hamori';

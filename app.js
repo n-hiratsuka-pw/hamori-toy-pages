@@ -7,7 +7,7 @@ import { pitchShiftPSOLA, buildPitchMarks, matchLoudness, HARMONY_PRESETS, DEFAU
 import { APP_VERSION } from './version.js';
 import { listTakes, getTake, saveTake, setFavorite, updateEnabled, deleteTake, FAVORITE_MAX } from './store.js';
 
-const MAX_SECONDS = 20;
+const MAX_SECONDS = 30;
 const MIN_SECONDS = 0.5;
 const SETTINGS_KEY = 'hamori.settings.v1';
 const ENABLED_KEY = 'hamori.enabled.v1';
