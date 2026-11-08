@@ -10,6 +10,7 @@ import { listTakes, getTake, saveTake, setFavorite, updateEnabled, deleteTake, F
 const MAX_SECONDS = 20;
 const MIN_SECONDS = 0.5;
 const SETTINGS_KEY = 'hamori.settings.v1';
+const ENABLED_KEY = 'hamori.enabled.v1';
 
 // 設定の既定値（保護者用パネルで変更。端末内 localStorage に保存）
 const DEFAULT_SETTINGS = {
@@ -73,7 +74,7 @@ const state = {
   takeFavorite: false,
   speed: 1,              // 再生スピード（音程は変えない時間伸縮）
   buffers: {},           // speedKey → { original: AudioBuffer, harmonies: { id → AudioBuffer } }
-  enabled: {},          // id → bool（スイッチ状態）
+  enabled: loadEnabled(), // id → bool（スイッチ状態。端末に保存し、録音をまたいで保持）
   // 再生
   playing: false,
   sources: [],
@@ -110,6 +111,17 @@ function loadSettings() {
   } catch (_) {
     return structuredClone(DEFAULT_SETTINGS);
   }
+}
+
+function loadEnabled() {
+  try {
+    const raw = localStorage.getItem(ENABLED_KEY);
+    const o = raw ? JSON.parse(raw) : {};
+    return o && typeof o === 'object' ? o : {};
+  } catch (_) { return {}; }
+}
+function saveEnabled() {
+  try { localStorage.setItem(ENABLED_KEY, JSON.stringify(state.enabled)); } catch (_) { /* noop */ }
 }
 
 function clamp01(v, fallback) {
@@ -281,7 +293,7 @@ async function stopRecording() {
 
   state.pcm = pcm;
   state.duration = pcm.length / state.sampleRate;
-  state.enabled = {};
+  // スイッチ状態は引き継ぐ（録音のたびにリセットしない）
   state.takeId = null;
   state.takeFavorite = false;
   try {
@@ -498,6 +510,7 @@ async function setSpeed(value) {
 
 function toggleHarmony(id) {
   state.enabled[id] = !state.enabled[id];
+  saveEnabled();
   if (state.takeId) updateEnabled(state.takeId, state.enabled).catch(() => {});
   const btn = el.switches.querySelector(`[data-id="${id}"]`);
   if (btn) btn.classList.toggle('on', state.enabled[id]);
@@ -796,7 +809,9 @@ async function loadTake(id) {
   state.pcm = take.pcm;
   state.sampleRate = take.sampleRate;
   state.duration = take.duration;
-  state.enabled = { ...(take.enabled || {}) };
+  const saved = take.enabled || {};
+  if (Object.values(saved).some(Boolean)) state.enabled = { ...saved };
+  saveEnabled();
   state.takeId = take.id;
   state.takeFavorite = !!take.favorite;
   await processRecording(true);
