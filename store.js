@@ -88,7 +88,7 @@ export async function getTake(id) {
  * 新しいテイクを保存し、「さいきん」の上限を超えた古い非お気に入りを削除する。
  * @returns {Promise<string>} id
  */
-export async function saveTake({ pcm, sampleRate, duration, enabled }) {
+export async function saveTake({ pcm, sampleRate, duration, enabled, drums = [] }) {
   const db = await openDb();
   const id = `t${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
   const rec = {
@@ -98,6 +98,7 @@ export async function saveTake({ pcm, sampleRate, duration, enabled }) {
     sampleRate,
     duration,
     enabled: { ...enabled },
+    drums: drums.map((d) => ({ t: d.t, type: d.type, source: d.source || 'rec' })),
     pcm: toInt16(pcm).buffer,
   };
   await tx(db, 'readwrite', (s) => s.put(rec));
@@ -141,6 +142,18 @@ export async function updateEnabled(id, enabled) {
   });
   if (!rec) return;
   rec.enabled = { ...enabled };
+  await tx(db, 'readwrite', (s) => s.put(rec));
+}
+
+export async function updateDrums(id, drums) {
+  const db = await openDb();
+  const rec = await new Promise((resolve, reject) => {
+    const req = db.transaction(STORE, 'readonly').objectStore(STORE).get(id);
+    req.onsuccess = () => resolve(req.result || null);
+    req.onerror = () => reject(req.error);
+  });
+  if (!rec) return;
+  rec.drums = drums.map((d) => ({ t: d.t, type: d.type, source: d.source || 'rec' }));
   await tx(db, 'readwrite', (s) => s.put(rec));
 }
 

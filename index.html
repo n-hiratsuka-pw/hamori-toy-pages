@@ -23,11 +23,17 @@
         </div>
         <button id="btn-play" class="big-round play" aria-label="再生" disabled><span>▶</span></button>
       </div>
+      <div class="pads">
+        <button id="pad-drum" class="pad drum" aria-label="ドラム"><span class="pad-icon">🥁</span><span class="pad-label">ドラム</span></button>
+        <button id="pad-cymbal" class="pad cymbal" aria-label="シンバル"><span class="pad-icon"><svg viewBox="0 0 64 40" width="56" height="36" aria-hidden="true"><ellipse cx="32" cy="22" rx="30" ry="9" fill="#e9b949" stroke="#b8860b" stroke-width="2"/><ellipse cx="32" cy="20" rx="7" ry="3" fill="#f6d77a" stroke="#b8860b" stroke-width="1.5"/><line x1="32" y1="2" x2="32" y2="18" stroke="#7a5c1e" stroke-width="3" stroke-linecap="round"/></svg></span><span class="pad-label">シンバル</span></button>
+      </div>
       <div class="switches" id="switches"></div>
       <div class="speeds" id="speeds"></div>
       <div class="bottom-row">
         <button id="btn-favorite" class="pill star" aria-label="おきにいり" disabled>☆</button>
         <button id="btn-library" class="pill" aria-label="きろく">📚 きろく</button>
+        <button id="btn-overdub" class="pill overdub" aria-label="あとから たいこを かさねる" disabled>🥁 かさねる</button>
+        <button id="btn-drum-clear" class="pill small" aria-label="かさねた たいこを けす" hidden>🥁 けす</button>
       </div>
       <div id="version" class="version"></div>
     </section>
@@ -54,6 +60,11 @@
           <span>じぶんの声の大きさ</span>
           <input id="level-original" type="range" min="0" max="120" step="5">
           <output id="level-original-value">70</output>
+        </label>
+        <label class="row">
+          <span>たいこの大きさ</span>
+          <input id="level-drums" type="range" min="0" max="120" step="5">
+          <output id="level-drums-value">80</output>
         </label>
         <label class="row">
           <span>ハモリの大きさ</span>

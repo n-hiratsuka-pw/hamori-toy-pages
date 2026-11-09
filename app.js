@@ -5,7 +5,8 @@
 import { detectPitch } from './pitch.js';
 import { pitchShiftPSOLA, buildPitchMarks, matchLoudness, HARMONY_PRESETS, DEFAULT_PRESET_IDS } from './psola.js';
 import { APP_VERSION } from './version.js';
-import { listTakes, getTake, saveTake, setFavorite, updateEnabled, deleteTake, FAVORITE_MAX } from './store.js';
+import { playHit, alignHits, maskDrumPitch, cleanDrumBleed } from './drums.js';
+import { listTakes, getTake, saveTake, setFavorite, updateEnabled, updateDrums, deleteTake, FAVORITE_MAX } from './store.js';
 
 const MAX_SECONDS = 30;
 const MIN_SECONDS = 0.5;
@@ -16,6 +17,7 @@ const ENABLED_KEY = 'hamori.enabled.v1';
 const DEFAULT_SETTINGS = {
   levelOriginal: 0.7,  // 原音の再生レベル
   levelHarmony: 0.9,   // ハモリ各本の再生レベル（ハモリが少し目立つ既定）
+  levelDrums: 0.8,     // ドラム・シンバルのレベル
   presetIds: DEFAULT_PRESET_IDS.slice(),
 };
 
@@ -49,6 +51,12 @@ const el = {
   levelOriginalValue: $('level-original-value'),
   levelHarmonyValue: $('level-harmony-value'),
   presetList: $('preset-list'),
+  levelDrums: $('level-drums'),
+  levelDrumsValue: $('level-drums-value'),
+  padDrum: $('pad-drum'),
+  padCymbal: $('pad-cymbal'),
+  btnOverdub: $('btn-overdub'),
+  btnDrumClear: $('btn-drum-clear'),
 };
 
 const state = {
@@ -83,6 +91,12 @@ const state = {
   playOffset: 0,     // 開始位置（伸縮後の秒）
   live: [],          // 録音中のリアルタイムピッチ [{t, f}]
   liveRange: null,
+  drumEvents: [],    // 録音時に叩いた {t: 秒, type: 'drum'|'cymbal'}
+  recStartCtx: 0,
+  liveDrumBus: null,
+  playDrumBus: null,
+  overdub: false,    // 「🥁 かさねる」中
+  harmonySrc: null,  // ドラムの回り込みを除いた、解析・ハモリ用の信号
   viewTime: 0,       // 停止中に表示している「いま」の時刻
   liveTail: new Float32Array(0),
   rafId: 0,
@@ -106,6 +120,7 @@ function loadSettings() {
     return {
       levelOriginal: clamp01(s.levelOriginal, DEFAULT_SETTINGS.levelOriginal),
       levelHarmony: clamp01(s.levelHarmony, DEFAULT_SETTINGS.levelHarmony),
+      levelDrums: clamp01(s.levelDrums, DEFAULT_SETTINGS.levelDrums),
       presetIds: presetIds.length ? presetIds : DEFAULT_SETTINGS.presetIds.slice(),
     };
   } catch (_) {
@@ -223,11 +238,15 @@ async function startRecording() {
 
   state.recording = true;
   state.recStart = performance.now();
+  state.recStartCtx = ctx.currentTime;
+  state.drumEvents = [];
   state.live = [];
   state.liveRange = null;
   state.liveTail = new Float32Array(0);
   el.btnRecord.classList.add('recording');
   el.btnPlay.disabled = true;
+  el.btnOverdub.disabled = true;
+  el.btnDrumClear.hidden = true;
   el.hint.textContent = 'うたったら もういちど おしてね';
   tickRecording();
 }
@@ -270,6 +289,7 @@ async function stopRecording() {
   el.btnRecord.classList.remove('recording');
   el.meter.style.width = '0%';
   el.btnPlay.disabled = !currentSet();
+  el.btnOverdub.disabled = !currentSet();
   try { state.recNode.port?.postMessage('stop'); } catch (_) { /* ScriptProcessor */ }
   try { state.srcNode.disconnect(); state.recNode.disconnect(); state.analyser.disconnect(); } catch (_) { /* noop */ }
   state.stream.getTracks().forEach((t) => t.stop());
@@ -293,11 +313,16 @@ async function stopRecording() {
 
   state.pcm = pcm;
   state.duration = pcm.length / state.sampleRate;
+  // ドラムのタイミングを、マイクに回り込んだ音の立ち上がりに合わせて補正
+  if (state.drumEvents.length) {
+    const fallback = (state.ctx.outputLatency || 0) + (state.ctx.baseLatency || 0) + 0.02;
+    state.drumEvents = alignHits(pcm, state.sampleRate, state.drumEvents, fallback);
+  }
   // スイッチ状態は引き継ぐ（録音のたびにリセットしない）
   state.takeId = null;
   state.takeFavorite = false;
   try {
-    state.takeId = await saveTake({ pcm, sampleRate: state.sampleRate, duration: state.duration, enabled: state.enabled });
+    state.takeId = await saveTake({ pcm, sampleRate: state.sampleRate, duration: state.duration, enabled: state.enabled, drums: state.drumEvents });
   } catch (e) {
     console.warn('save failed', e);
   }
@@ -310,8 +335,10 @@ async function processRecording(autoplay = false) {
   await yieldToUI();
   const { pcm, sampleRate, ctx } = state;
   const t0 = performance.now();
-  state.track = detectPitch(pcm, sampleRate);
-  state.marks = buildPitchMarks(pcm, sampleRate, state.track);
+  // 同時録音で入ったドラム・シンバルの音を除いてから解析・ハモリ生成する（原音の再生には元の録音を使う）
+  state.harmonySrc = cleanDrumBleed(pcm, sampleRate, state.drumEvents);
+  state.track = maskDrumPitch(detectPitch(state.harmonySrc, sampleRate), state.drumEvents);
+  state.marks = buildPitchMarks(state.harmonySrc, sampleRate, state.track);
   state.buffers = {};
   state.speed = 1;
   await yieldToUI();
@@ -325,6 +352,8 @@ async function processRecording(autoplay = false) {
   buildSpeeds();
   updateFavoriteButton();
   el.btnPlay.disabled = false;
+  el.btnOverdub.disabled = false;
+  updateDrumClear();
   el.hint.textContent = 'スイッチを おして、▶ で きいてね';
   state.live = [];
   showScreen('main');
@@ -347,7 +376,7 @@ async function ensureBuffers() {
   }
   for (const p of activePresets()) {
     if (set.harmonies[p.id]) continue;
-    const y = pitchShiftPSOLA(pcm, sampleRate, state.track, p.semitones, state.marks, stretch);
+    const y = pitchShiftPSOLA(state.harmonySrc || pcm, sampleRate, state.track, p.semitones, state.marks, stretch);
     matchLoudness(pcm, y);
     set.harmonies[p.id] = toAudioBuffer(ctx, y, sampleRate);
     await yieldToUI();
@@ -404,6 +433,16 @@ function startPlayback(offset = 0) {
   }
   main.onended = () => { if (state.playing && state.sources.includes(main)) stopPlayback(); };
 
+  // 録音時に叩いたドラム・シンバルを、合成音で同じタイミングに鳴らす
+  const dbus = ctx.createGain();
+  dbus.gain.value = state.settings.levelDrums;
+  dbus.connect(master);
+  state.playDrumBus = dbus;
+  for (const ev of state.drumEvents) {
+    const tt = ev.t / state.speed;
+    if (tt >= offset - 0.001 && tt < dur) playHit(ctx, dbus, ev.type, when + (tt - offset));
+  }
+
   state.playing = true;
   state.playStart = when;
   state.playOffset = offset;
@@ -419,10 +458,11 @@ function stopPlayback(silent = false) {
   for (const s of state.sources) { try { s.onended = null; s.stop(); } catch (_) { /* already stopped */ } }
   state.sources = [];
   state.gains = {};
+  if (state.playDrumBus) { try { state.playDrumBus.disconnect(); } catch (_) { /* noop */ } state.playDrumBus = null; }
   el.btnPlay.classList.remove('playing');
   el.btnPlay.querySelector('span').textContent = '▶';
   state.viewTime = 0;
-  if (!silent) drawCanvas();
+  if (!silent) { drawCanvas(); if (state.overdub) finishOverdub(); }
 }
 
 function playheadTime() {
@@ -628,6 +668,16 @@ function drawCanvas() {
     drawPolyline(pts(1), '#3a2e1f', 14);
   }
 
+  // ドラム（下）・シンバル（上）の印
+  const evs = state.recording ? state.drumEvents : state.drumEvents.map((e) => ({ ...e, t: e.t / state.speed }));
+  for (const ev of evs) {
+    const x = xOf(ev.t);
+    if (x < -20 || x > W + 20) continue;
+    const isC = ev.type === 'cymbal';
+    g.fillStyle = isC ? '#e9b949' : '#a0522d';
+    g.beginPath(); g.arc(x, isC ? 22 : H - 22, 13, 0, Math.PI * 2); g.fill();
+  }
+
   // 「いま」のカーソル
   const cx = W * CURSOR_RATIO;
   g.strokeStyle = state.recording ? 'rgba(255,59,59,0.9)' : 'rgba(78,205,196,0.95)';
@@ -653,6 +703,8 @@ function buildSwitches() {
 function openSettings() {
   el.levelOriginal.value = Math.round(state.settings.levelOriginal * 100);
   el.levelHarmony.value = Math.round(state.settings.levelHarmony * 100);
+  el.levelDrums.value = Math.round(state.settings.levelDrums * 100);
+  el.levelDrumsValue.textContent = el.levelDrums.value;
   el.levelOriginalValue.textContent = el.levelOriginal.value;
   el.levelHarmonyValue.textContent = el.levelHarmony.value;
   el.presetList.innerHTML = '';
@@ -701,6 +753,13 @@ el.levelOriginal.addEventListener('input', () => {
   el.levelOriginalValue.textContent = el.levelOriginal.value;
   saveSettings();
   applyLevelsLive();
+});
+el.levelDrums.addEventListener('input', () => {
+  state.settings.levelDrums = Number(el.levelDrums.value) / 100;
+  el.levelDrumsValue.textContent = el.levelDrums.value;
+  saveSettings();
+  if (state.liveDrumBus) state.liveDrumBus.gain.value = state.settings.levelDrums;
+  if (state.playDrumBus) state.playDrumBus.gain.value = state.settings.levelDrums;
 });
 el.levelHarmony.addEventListener('input', () => {
   state.settings.levelHarmony = Number(el.levelHarmony.value) / 100;
@@ -814,12 +873,78 @@ async function loadTake(id) {
   saveEnabled();
   state.takeId = take.id;
   state.takeFavorite = !!take.favorite;
+  state.drumEvents = Array.isArray(take.drums) ? take.drums : [];
   await processRecording(true);
 }
 
 el.btnFavorite.addEventListener('click', toggleFavorite);
 el.btnLibrary.addEventListener('click', openLibrary);
 el.btnLibraryBack.addEventListener('click', () => showScreen('main'));
+
+// ---------- ドラム・シンバル ----------
+async function hitPad(type, btn) {
+  btn.classList.add('hit');
+  setTimeout(() => btn.classList.remove('hit'), 90);
+  let ctx;
+  try { ctx = await ensureContext(); } catch (_) { return; }
+  if (!state.liveDrumBus) {
+    state.liveDrumBus = ctx.createGain();
+    const lim = ctx.createDynamicsCompressor();
+    lim.threshold.value = -3; lim.knee.value = 2; lim.ratio.value = 12; lim.attack.value = 0.002; lim.release.value = 0.1;
+    state.liveDrumBus.connect(lim);
+    lim.connect(ctx.destination);
+  }
+  state.liveDrumBus.gain.value = state.settings.levelDrums;
+  playHit(ctx, state.liveDrumBus, type);
+  // 録音中に叩いたものだけ録音に入れる（再生中・停止中はその場で鳴るだけ）
+  if (state.recording) {
+    state.drumEvents.push({ t: ctx.currentTime - state.recStartCtx, type, source: 'rec' });
+    drawCanvas();
+  } else if (state.overdub && state.playing) {
+    // 聞こえている音に合わせて叩くので、出力の遅れ分を差し引く
+    const lat = (ctx.outputLatency || 0) + (ctx.baseLatency || 0);
+    const t = Math.max(0, (playheadTime() - lat) * state.speed);
+    state.drumEvents.push({ t, type, source: 'overdub' });
+    state.drumEvents.sort((a, b) => a.t - b.t);
+    updateDrumClear();
+  }
+}
+// 「🥁 かさねる」：歌を流し、叩いた音を録音に追加する
+function startOverdub() {
+  if (!currentSet() || state.recording) return;
+  state.overdub = true;
+  el.btnOverdub.classList.add('on');
+  el.btnOverdub.textContent = '🥁 おわる';
+  el.hint.textContent = 'うたに あわせて たいこを たたいてね';
+  startPlayback(0);
+}
+function finishOverdub() {
+  if (!state.overdub) return;
+  state.overdub = false;
+  el.btnOverdub.classList.remove('on');
+  el.btnOverdub.textContent = '🥁 かさねる';
+  el.hint.textContent = 'スイッチを おして、▶ で きいてね';
+  if (state.takeId) updateDrums(state.takeId, state.drumEvents).catch(() => {});
+  updateDrumClear();
+}
+function updateDrumClear() {
+  el.btnDrumClear.hidden = !state.drumEvents.some((e) => e.source === 'overdub');
+}
+el.btnOverdub.addEventListener('click', () => {
+  if (state.overdub) { stopPlayback(); } else startOverdub();
+});
+el.btnDrumClear.addEventListener('click', () => {
+  if (!window.confirm('あとから かさねた たいこを けしますか？')) return;
+  state.drumEvents = state.drumEvents.filter((e) => e.source !== 'overdub');
+  if (state.takeId) updateDrums(state.takeId, state.drumEvents).catch(() => {});
+  updateDrumClear();
+  drawCanvas();
+});
+
+for (const [btn, type] of [[el.padDrum, 'drum'], [el.padCymbal, 'cymbal']]) {
+  btn.addEventListener('pointerdown', (e) => { e.preventDefault(); hitPad(type, btn); });
+  btn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); hitPad(type, btn); } });
+}
 
 // ---------- バージョン表示 ----------
 async function showVersion() {
