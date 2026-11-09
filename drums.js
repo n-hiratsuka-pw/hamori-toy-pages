@@ -57,36 +57,34 @@ function playDrum(ctx, dest, when) {
   o2.start(when); o2.stop(when + 0.2);
 }
 
-/** シンバル風：高域ノイズ＋非整数倍の矩形波（金属的な響き）、長い減衰 */
+/**
+ * シンバル風（乾いた音）：高域ノイズだけで作る。音程のある成分は入れない（入れると銅鑼のように鳴る）。
+ *  - 本体：7 kHz 以上（2 段ハイパス）＋ 10 kHz 付近を強調。短いアタックから 0.1 秒で 1/4 まで落ち、0.6 秒で消える
+ *  - 打撃音：3 kHz 付近の短いノイズ（スティックが当たる「チッ」）
+ * v0.7.1 で変更（v0.7.0 は 400〜1700 Hz の矩形波と 1.8 秒の余韻で、銅鑼のように聞こえた）
+ */
 function playCymbal(ctx, dest, when) {
   const n = ctx.createBufferSource();
   n.buffer = noiseBuffer(ctx);
-  const hp = ctx.createBiquadFilter();
-  hp.type = 'highpass'; hp.frequency.value = 5500;
-  const pk = ctx.createBiquadFilter();
-  pk.type = 'peaking'; pk.frequency.value = 9000; pk.gain.value = 6; pk.Q.value = 1;
+  const hp1 = ctx.createBiquadFilter(); hp1.type = 'highpass'; hp1.frequency.value = 7000;
+  const hp2 = ctx.createBiquadFilter(); hp2.type = 'highpass'; hp2.frequency.value = 7000;
+  const pk = ctx.createBiquadFilter(); pk.type = 'peaking'; pk.frequency.value = 10000; pk.gain.value = 5; pk.Q.value = 0.9;
   const g = ctx.createGain();
   g.gain.setValueAtTime(0.0001, when);
-  g.gain.exponentialRampToValueAtTime(0.35, when + 0.004);
-  g.gain.exponentialRampToValueAtTime(0.06, when + 0.25);
-  g.gain.exponentialRampToValueAtTime(0.001, when + 1.8);
-  n.connect(hp); hp.connect(pk); pk.connect(g); g.connect(dest);
-  n.start(when); n.stop(when + 1.9);
+  g.gain.exponentialRampToValueAtTime(0.32, when + 0.002);
+  g.gain.exponentialRampToValueAtTime(0.08, when + 0.1);
+  g.gain.exponentialRampToValueAtTime(0.001, when + 0.6);
+  n.connect(hp1); hp1.connect(hp2); hp2.connect(pk); pk.connect(g); g.connect(dest);
+  n.start(when, Math.random()); n.stop(when + 0.65);
 
-  const mhp = ctx.createBiquadFilter();
-  mhp.type = 'highpass'; mhp.frequency.value = 6500;
-  const mg = ctx.createGain();
-  mg.gain.setValueAtTime(0.0001, when);
-  mg.gain.exponentialRampToValueAtTime(0.08, when + 0.004);
-  mg.gain.exponentialRampToValueAtTime(0.001, when + 1.2);
-  mhp.connect(mg); mg.connect(dest);
-  for (const r of [2, 3, 4.16, 5.43, 6.79, 8.21]) {
-    const o = ctx.createOscillator();
-    o.type = 'square';
-    o.frequency.value = 205 * r;
-    o.connect(mhp);
-    o.start(when); o.stop(when + 1.3);
-  }
+  const s = ctx.createBufferSource();
+  s.buffer = noiseBuffer(ctx);
+  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 3200; bp.Q.value = 1.2;
+  const sg = ctx.createGain();
+  sg.gain.setValueAtTime(0.25, when);
+  sg.gain.exponentialRampToValueAtTime(0.001, when + 0.02);
+  s.connect(bp); bp.connect(sg); sg.connect(dest);
+  s.start(when, Math.random()); s.stop(when + 0.03);
 }
 
 export function playHit(ctx, dest, type, when = ctx.currentTime) {
@@ -160,7 +158,7 @@ function lowpass(x, sr, fc) {
 
 /**
  * 同時録音でマイクに入ったドラム・シンバルの音を、ハモリ生成・ピッチ解析用の信号から取り除く。
- *  - シンバル：叩いてから 1.6 秒間、3.8 kHz 以下だけを通す（シンバルは高域、声の主成分は低〜中域）
+ *  - シンバル：叩いてから 0.7 秒間、3.8 kHz 以下だけを通す（シンバルは高域、声の主成分は低〜中域）
  *  - ドラム：叩いた直後 130 ms を 1/10 に下げる
  * 「あとから重ねた」ドラム（source: 'overdub'）はマイクに入っていないので対象外。
  * 戻り値は新しい配列（元の録音は変更しない）。
@@ -176,7 +174,7 @@ export function cleanDrumBleed(pcm, sampleRate, events) {
   for (const e of rec) {
     const s = Math.round(e.t * sr);
     if (e.type === 'cymbal') {
-      const end = s + Math.round(1.6 * sr);
+      const end = s + Math.round(0.7 * sr);
       for (let i = Math.max(0, s - fade); i < Math.min(n, end + fade); i++) {
         let m = 1;
         if (i < s) m = (i - (s - fade)) / fade;
