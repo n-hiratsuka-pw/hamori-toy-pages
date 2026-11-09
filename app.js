@@ -17,7 +17,10 @@ const ENABLED_KEY = 'hamori.enabled.v1';
 const DEFAULT_SETTINGS = {
   levelOriginal: 0.7,  // 原音の再生レベル
   levelHarmony: 0.9,   // ハモリ各本の再生レベル（ハモリが少し目立つ既定）
-  levelDrums: 0.8,     // ドラム・シンバルのレベル
+  drumLevel: 0.8,      // ドラムの音量
+  drumTune: 1,         // ドラムの高さ倍率（0.6〜1.6）
+  cymbalLevel: 0.8,    // シンバルの音量
+  cymbalDecay: 1,      // シンバルの余韻倍率（0.4〜2.5）
   presetIds: DEFAULT_PRESET_IDS.slice(),
 };
 
@@ -51,8 +54,6 @@ const el = {
   levelOriginalValue: $('level-original-value'),
   levelHarmonyValue: $('level-harmony-value'),
   presetList: $('preset-list'),
-  levelDrums: $('level-drums'),
-  levelDrumsValue: $('level-drums-value'),
   padDrum: $('pad-drum'),
   padCymbal: $('pad-cymbal'),
   btnOverdub: $('btn-overdub'),
@@ -120,7 +121,11 @@ function loadSettings() {
     return {
       levelOriginal: clamp01(s.levelOriginal, DEFAULT_SETTINGS.levelOriginal),
       levelHarmony: clamp01(s.levelHarmony, DEFAULT_SETTINGS.levelHarmony),
-      levelDrums: clamp01(s.levelDrums, DEFAULT_SETTINGS.levelDrums),
+      // v0.7.0 の levelDrums（共通音量）があれば両方の初期値に引き継ぐ
+      drumLevel: clamp01(s.drumLevel ?? s.levelDrums, DEFAULT_SETTINGS.drumLevel),
+      drumTune: clampRange(s.drumTune, 0.6, 1.6, DEFAULT_SETTINGS.drumTune),
+      cymbalLevel: clamp01(s.cymbalLevel ?? s.levelDrums, DEFAULT_SETTINGS.cymbalLevel),
+      cymbalDecay: clampRange(s.cymbalDecay, 0.4, 2.5, DEFAULT_SETTINGS.cymbalDecay),
       presetIds: presetIds.length ? presetIds : DEFAULT_SETTINGS.presetIds.slice(),
     };
   } catch (_) {
@@ -137,6 +142,11 @@ function loadEnabled() {
 }
 function saveEnabled() {
   try { localStorage.setItem(ENABLED_KEY, JSON.stringify(state.enabled)); } catch (_) { /* noop */ }
+}
+
+function clampRange(v, lo, hi, fallback) {
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : fallback;
 }
 
 function clamp01(v, fallback) {
@@ -435,12 +445,12 @@ function startPlayback(offset = 0) {
 
   // 録音時に叩いたドラム・シンバルを、合成音で同じタイミングに鳴らす
   const dbus = ctx.createGain();
-  dbus.gain.value = state.settings.levelDrums;
+  dbus.gain.value = 1;
   dbus.connect(master);
   state.playDrumBus = dbus;
   for (const ev of state.drumEvents) {
     const tt = ev.t / state.speed;
-    if (tt >= offset - 0.001 && tt < dur) playHit(ctx, dbus, ev.type, when + (tt - offset));
+    if (tt >= offset - 0.001 && tt < dur) playHit(ctx, dbus, ev.type, when + (tt - offset), hitOpts(ev.type));
   }
 
   state.playing = true;
@@ -703,8 +713,7 @@ function buildSwitches() {
 function openSettings() {
   el.levelOriginal.value = Math.round(state.settings.levelOriginal * 100);
   el.levelHarmony.value = Math.round(state.settings.levelHarmony * 100);
-  el.levelDrums.value = Math.round(state.settings.levelDrums * 100);
-  el.levelDrumsValue.textContent = el.levelDrums.value;
+  for (const s of DRUM_SLIDERS) { s.el.value = Math.round(state.settings[s.key] * 100); s.out.textContent = s.el.value; }
   el.levelOriginalValue.textContent = el.levelOriginal.value;
   el.levelHarmonyValue.textContent = el.levelHarmony.value;
   el.presetList.innerHTML = '';
@@ -754,13 +763,24 @@ el.levelOriginal.addEventListener('input', () => {
   saveSettings();
   applyLevelsLive();
 });
-el.levelDrums.addEventListener('input', () => {
-  state.settings.levelDrums = Number(el.levelDrums.value) / 100;
-  el.levelDrumsValue.textContent = el.levelDrums.value;
-  saveSettings();
-  if (state.liveDrumBus) state.liveDrumBus.gain.value = state.settings.levelDrums;
-  if (state.playDrumBus) state.playDrumBus.gain.value = state.settings.levelDrums;
-});
+// ドラム・シンバルの設定（大きさ・音色）。指を離したときに試し打ちする
+const DRUM_SLIDERS = [
+  { key: 'drumLevel', id: 'drum-level', type: 'drum' },
+  { key: 'drumTune', id: 'drum-tune', type: 'drum' },
+  { key: 'cymbalLevel', id: 'cymbal-level', type: 'cymbal' },
+  { key: 'cymbalDecay', id: 'cymbal-decay', type: 'cymbal' },
+].map((s) => ({ ...s, el: $(s.id), out: $(s.id + '-value') }));
+for (const s of DRUM_SLIDERS) {
+  s.el.addEventListener('input', () => {
+    state.settings[s.key] = Number(s.el.value) / 100;
+    s.out.textContent = s.el.value;
+    saveSettings();
+  });
+  s.el.addEventListener('change', async () => {
+    try { const ctx = await ensureContext(); playHit(ctx, liveDrumBus(ctx), s.type, ctx.currentTime, hitOpts(s.type)); } catch (_) { /* noop */ }
+  });
+}
+
 el.levelHarmony.addEventListener('input', () => {
   state.settings.levelHarmony = Number(el.levelHarmony.value) / 100;
   el.levelHarmonyValue.textContent = el.levelHarmony.value;
@@ -882,11 +902,13 @@ el.btnLibrary.addEventListener('click', openLibrary);
 el.btnLibraryBack.addEventListener('click', () => showScreen('main'));
 
 // ---------- ドラム・シンバル ----------
-async function hitPad(type, btn) {
-  btn.classList.add('hit');
-  setTimeout(() => btn.classList.remove('hit'), 90);
-  let ctx;
-  try { ctx = await ensureContext(); } catch (_) { return; }
+/** 設定から 1 打分の音量・音色を作る */
+function hitOpts(type) {
+  const s = state.settings;
+  return type === 'cymbal' ? { level: s.cymbalLevel, decay: s.cymbalDecay } : { level: s.drumLevel, tune: s.drumTune };
+}
+/** パッド・試し打ち用の出力（リミッター付き） */
+function liveDrumBus(ctx) {
   if (!state.liveDrumBus) {
     state.liveDrumBus = ctx.createGain();
     const lim = ctx.createDynamicsCompressor();
@@ -894,11 +916,17 @@ async function hitPad(type, btn) {
     state.liveDrumBus.connect(lim);
     lim.connect(ctx.destination);
   }
-  state.liveDrumBus.gain.value = state.settings.levelDrums;
-  playHit(ctx, state.liveDrumBus, type);
+  return state.liveDrumBus;
+}
+async function hitPad(type, btn) {
+  btn.classList.add('hit');
+  setTimeout(() => btn.classList.remove('hit'), 90);
+  let ctx;
+  try { ctx = await ensureContext(); } catch (_) { return; }
+  playHit(ctx, liveDrumBus(ctx), type, ctx.currentTime, hitOpts(type));
   // 録音中に叩いたものだけ録音に入れる（再生中・停止中はその場で鳴るだけ）
   if (state.recording) {
-    state.drumEvents.push({ t: ctx.currentTime - state.recStartCtx, type, source: 'rec' });
+    state.drumEvents.push({ t: ctx.currentTime - state.recStartCtx, type, source: 'rec', decay: type === 'cymbal' ? state.settings.cymbalDecay : undefined });
     drawCanvas();
   } else if (state.overdub && state.playing) {
     // 聞こえている音に合わせて叩くので、出力の遅れ分を差し引く
