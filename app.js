@@ -5,7 +5,7 @@
 import { detectPitch } from './pitch.js';
 import { pitchShiftPSOLA, buildPitchMarks, matchLoudness, HARMONY_PRESETS, DEFAULT_PRESET_IDS } from './psola.js';
 import { APP_VERSION } from './version.js';
-import { playHit, alignHits, maskDrumPitch, cleanDrumBleed } from './drums.js';
+import { playHit, maskDrumPitch, cleanDrumBleed, KIT, kitOf } from './drums.js';
 import { listTakes, getTake, saveTake, setFavorite, updateEnabled, updateDrums, deleteTake, FAVORITE_MAX } from './store.js';
 
 const MAX_SECONDS = 30;
@@ -54,10 +54,16 @@ const el = {
   levelOriginalValue: $('level-original-value'),
   levelHarmonyValue: $('level-harmony-value'),
   presetList: $('preset-list'),
-  padDrum: $('pad-drum'),
-  padCymbal: $('pad-cymbal'),
-  btnOverdub: $('btn-overdub'),
-  btnDrumClear: $('btn-drum-clear'),
+  btnDrums: $('btn-drums'),
+  screenDrums: $('screen-drums'),
+  drumsHint: $('drums-hint'),
+  drumTimeline: $('drum-timeline'),
+  kit: $('kit'),
+  btnDrumsDone: $('btn-drums-done'),
+  btnDrumsRec: $('btn-drums-rec'),
+  btnDrumsPlay: $('btn-drums-play'),
+  btnDrumsUndo: $('btn-drums-undo'),
+  btnDrumsClear: $('btn-drums-clear'),
 };
 
 const state = {
@@ -92,11 +98,13 @@ const state = {
   playOffset: 0,     // 開始位置（伸縮後の秒）
   live: [],          // 録音中のリアルタイムピッチ [{t, f}]
   liveRange: null,
-  drumEvents: [],    // 録音時に叩いた {t: 秒, type: 'drum'|'cymbal'}
+  drumEvents: [],    // 打ち込んだドラム {t: 元の録音上の秒, type: KIT の type, source, pass}
   recStartCtx: 0,
   liveDrumBus: null,
   playDrumBus: null,
-  overdub: false,    // 「🥁 かさねる」中
+  overdub: false,    // ドラム画面で録音（打ち込み）中
+  drumScreen: false, // ドラム画面を開いている
+  drumPass: 0,       // 何回目の打ち込みか（「もどす」の単位）
   harmonySrc: null,  // ドラムの回り込みを除いた、解析・ハモリ用の信号
   viewTime: 0,       // 停止中に表示している「いま」の時刻
   liveTail: new Float32Array(0),
@@ -255,8 +263,7 @@ async function startRecording() {
   state.liveTail = new Float32Array(0);
   el.btnRecord.classList.add('recording');
   el.btnPlay.disabled = true;
-  el.btnOverdub.disabled = true;
-  el.btnDrumClear.hidden = true;
+  el.btnDrums.disabled = true;
   el.hint.textContent = 'うたったら もういちど おしてね';
   tickRecording();
 }
@@ -299,7 +306,7 @@ async function stopRecording() {
   el.btnRecord.classList.remove('recording');
   el.meter.style.width = '0%';
   el.btnPlay.disabled = !currentSet();
-  el.btnOverdub.disabled = !currentSet();
+  el.btnDrums.disabled = !currentSet();
   try { state.recNode.port?.postMessage('stop'); } catch (_) { /* ScriptProcessor */ }
   try { state.srcNode.disconnect(); state.recNode.disconnect(); state.analyser.disconnect(); } catch (_) { /* noop */ }
   state.stream.getTracks().forEach((t) => t.stop());
@@ -323,11 +330,6 @@ async function stopRecording() {
 
   state.pcm = pcm;
   state.duration = pcm.length / state.sampleRate;
-  // ドラムのタイミングを、マイクに回り込んだ音の立ち上がりに合わせて補正
-  if (state.drumEvents.length) {
-    const fallback = (state.ctx.outputLatency || 0) + (state.ctx.baseLatency || 0) + 0.02;
-    state.drumEvents = alignHits(pcm, state.sampleRate, state.drumEvents, fallback);
-  }
   // スイッチ状態は引き継ぐ（録音のたびにリセットしない）
   state.takeId = null;
   state.takeFavorite = false;
@@ -362,8 +364,7 @@ async function processRecording(autoplay = false) {
   buildSpeeds();
   updateFavoriteButton();
   el.btnPlay.disabled = false;
-  el.btnOverdub.disabled = false;
-  updateDrumClear();
+  el.btnDrums.disabled = false;
   el.hint.textContent = 'スイッチを おして、▶ で きいてね';
   state.live = [];
   showScreen('main');
@@ -443,7 +444,7 @@ function startPlayback(offset = 0) {
   }
   main.onended = () => { if (state.playing && state.sources.includes(main)) stopPlayback(); };
 
-  // 録音時に叩いたドラム・シンバルを、合成音で同じタイミングに鳴らす
+  // 打ち込んだドラムを、合成音で同じタイミングに鳴らす
   const dbus = ctx.createGain();
   dbus.gain.value = 1;
   dbus.connect(master);
@@ -458,6 +459,7 @@ function startPlayback(offset = 0) {
   state.playOffset = offset;
   el.btnPlay.classList.add('playing');
   el.btnPlay.querySelector('span').textContent = '■';
+  updateDrumButtons();
   animatePlayhead();
 }
 
@@ -472,7 +474,7 @@ function stopPlayback(silent = false) {
   el.btnPlay.classList.remove('playing');
   el.btnPlay.querySelector('span').textContent = '▶';
   state.viewTime = 0;
-  if (!silent) { drawCanvas(); if (state.overdub) finishOverdub(); }
+  if (!silent) { drawCanvas(); if (state.overdub) finishOverdub(); updateDrumButtons(); drawDrumTimeline(); }
 }
 
 function playheadTime() {
@@ -481,7 +483,7 @@ function playheadTime() {
 
 function animatePlayhead() {
   if (!state.playing) return;
-  drawCanvas();
+  if (state.drumScreen) drawDrumTimeline(); else drawCanvas();
   state.rafId = requestAnimationFrame(animatePlayhead);
 }
 
@@ -678,14 +680,15 @@ function drawCanvas() {
     drawPolyline(pts(1), '#3a2e1f', 14);
   }
 
-  // ドラム（下）・シンバル（上）の印
-  const evs = state.recording ? state.drumEvents : state.drumEvents.map((e) => ({ ...e, t: e.t / state.speed }));
-  for (const ev of evs) {
-    const x = xOf(ev.t);
-    if (x < -20 || x > W + 20) continue;
-    const isC = ev.type === 'cymbal';
-    g.fillStyle = isC ? '#e9b949' : '#a0522d';
-    g.beginPath(); g.arc(x, isC ? 22 : H - 22, 13, 0, Math.PI * 2); g.fill();
+  // ドラムの印（シンバル類は上、太鼓類は下。色は楽器ごと）
+  if (!state.recording) {
+    for (const ev of state.drumEvents) {
+      const x = xOf(ev.t / state.speed);
+      if (x < -20 || x > W + 20) continue;
+      const k = kitOf(ev.type);
+      g.fillStyle = k.color;
+      g.beginPath(); g.arc(x, k.family === 'cymbal' ? 22 : H - 22, 12, 0, Math.PI * 2); g.fill();
+    }
   }
 
   // 「いま」のカーソル
@@ -765,10 +768,10 @@ el.levelOriginal.addEventListener('input', () => {
 });
 // ドラム・シンバルの設定（大きさ・音色）。指を離したときに試し打ちする
 const DRUM_SLIDERS = [
-  { key: 'drumLevel', id: 'drum-level', type: 'drum' },
-  { key: 'drumTune', id: 'drum-tune', type: 'drum' },
-  { key: 'cymbalLevel', id: 'cymbal-level', type: 'cymbal' },
-  { key: 'cymbalDecay', id: 'cymbal-decay', type: 'cymbal' },
+  { key: 'drumLevel', id: 'drum-level', type: 'snare' },
+  { key: 'drumTune', id: 'drum-tune', type: 'tomMid' },
+  { key: 'cymbalLevel', id: 'cymbal-level', type: 'crash' },
+  { key: 'cymbalDecay', id: 'cymbal-decay', type: 'crash' },
 ].map((s) => ({ ...s, el: $(s.id), out: $(s.id + '-value') }));
 for (const s of DRUM_SLIDERS) {
   s.el.addEventListener('input', () => {
@@ -901,13 +904,13 @@ el.btnFavorite.addEventListener('click', toggleFavorite);
 el.btnLibrary.addEventListener('click', openLibrary);
 el.btnLibraryBack.addEventListener('click', () => showScreen('main'));
 
-// ---------- ドラム・シンバル ----------
+// ---------- ドラム（声の録音のあとで、ドラム画面で打ち込む） ----------
 /** 設定から 1 打分の音量・音色を作る */
 function hitOpts(type) {
   const s = state.settings;
-  return type === 'cymbal' ? { level: s.cymbalLevel, decay: s.cymbalDecay } : { level: s.drumLevel, tune: s.drumTune };
+  return kitOf(type).family === 'cymbal' ? { level: s.cymbalLevel, decay: s.cymbalDecay } : { level: s.drumLevel, tune: s.drumTune };
 }
-/** パッド・試し打ち用の出力（リミッター付き） */
+/** ドラムセット・試し打ち用の出力（リミッター付き） */
 function liveDrumBus(ctx) {
   if (!state.liveDrumBus) {
     state.liveDrumBus = ctx.createGain();
@@ -918,60 +921,143 @@ function liveDrumBus(ctx) {
   }
   return state.liveDrumBus;
 }
-async function hitPad(type, btn) {
-  btn.classList.add('hit');
-  setTimeout(() => btn.classList.remove('hit'), 90);
+/** ドラムセットの 1 か所を叩く。いつでも音が鳴り、録音中だけ記録する */
+async function hitKit(type, node) {
+  node.classList.add('hit');
+  setTimeout(() => node.classList.remove('hit'), 90);
   let ctx;
   try { ctx = await ensureContext(); } catch (_) { return; }
   playHit(ctx, liveDrumBus(ctx), type, ctx.currentTime, hitOpts(type));
-  // 録音中に叩いたものだけ録音に入れる（再生中・停止中はその場で鳴るだけ）
-  if (state.recording) {
-    state.drumEvents.push({ t: ctx.currentTime - state.recStartCtx, type, source: 'rec', decay: type === 'cymbal' ? state.settings.cymbalDecay : undefined });
-    drawCanvas();
-  } else if (state.overdub && state.playing) {
-    // 聞こえている音に合わせて叩くので、出力の遅れ分を差し引く
+  if (state.overdub && state.playing) {
+    // 聞こえている音に合わせて叩くので、出力の遅れ分を差し引く。t は元の録音上の秒
     const lat = (ctx.outputLatency || 0) + (ctx.baseLatency || 0);
     const t = Math.max(0, (playheadTime() - lat) * state.speed);
-    state.drumEvents.push({ t, type, source: 'overdub' });
-    state.drumEvents.sort((a, b) => a.t - b.t);
-    updateDrumClear();
+    if (t <= state.duration) state.drumEvents.push({ t, type, source: 'overdub', pass: state.drumPass });
   }
 }
-// 「🥁 かさねる」：歌を流し、叩いた音を録音に追加する
-function startOverdub() {
+
+const hasOwnDrums = () => state.drumEvents.some((e) => e.source === 'overdub');
+
+function openDrums() {
   if (!currentSet() || state.recording) return;
+  stopPlayback();
+  state.drumScreen = true;
+  el.screenDrums.hidden = false;
+  updateDrumButtons();
+  drawDrumTimeline();
+}
+
+function closeDrums() {
+  stopPlayback();            // 録音中なら finishOverdub まで行う
+  state.drumScreen = false;
+  el.screenDrums.hidden = true;
+  drawCanvas();
+}
+
+/** ● ろくおん：歌を頭から流し、叩いた音を記録する。前に入れたドラムも一緒に鳴る（重ねられる） */
+function startDrumRec() {
+  if (!currentSet() || state.recording) return;
+  if (state.playing) stopPlayback();
+  state.drumPass = state.drumEvents.reduce((m, e) => Math.max(m, e.pass || 0), 0) + 1;
   state.overdub = true;
-  el.btnOverdub.classList.add('on');
-  el.btnOverdub.textContent = '🥁 おわる';
-  el.hint.textContent = 'うたに あわせて たいこを たたいてね';
   startPlayback(0);
 }
+
 function finishOverdub() {
   if (!state.overdub) return;
   state.overdub = false;
-  el.btnOverdub.classList.remove('on');
-  el.btnOverdub.textContent = '🥁 かさねる';
-  el.hint.textContent = 'スイッチを おして、▶ で きいてね';
-  if (state.takeId) updateDrums(state.takeId, state.drumEvents).catch(() => {});
-  updateDrumClear();
+  state.drumEvents.sort((a, b) => a.t - b.t);
+  saveDrums();
 }
-function updateDrumClear() {
-  el.btnDrumClear.hidden = !state.drumEvents.some((e) => e.source === 'overdub');
-}
-el.btnOverdub.addEventListener('click', () => {
-  if (state.overdub) { stopPlayback(); } else startOverdub();
-});
-el.btnDrumClear.addEventListener('click', () => {
-  if (!window.confirm('あとから かさねた たいこを けしますか？')) return;
-  state.drumEvents = state.drumEvents.filter((e) => e.source !== 'overdub');
-  if (state.takeId) updateDrums(state.takeId, state.drumEvents).catch(() => {});
-  updateDrumClear();
-  drawCanvas();
-});
 
-for (const [btn, type] of [[el.padDrum, 'drum'], [el.padCymbal, 'cymbal']]) {
-  btn.addEventListener('pointerdown', (e) => { e.preventDefault(); hitPad(type, btn); });
-  btn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); hitPad(type, btn); } });
+function saveDrums() {
+  if (state.takeId) updateDrums(state.takeId, state.drumEvents).catch(() => {});
+}
+
+function updateDrumButtons() {
+  const rec = state.overdub;
+  el.btnDrumsRec.classList.toggle('recording', rec);
+  el.btnDrumsRec.querySelector('span').textContent = rec ? '■' : '●';
+  const listening = state.playing && !rec;
+  el.btnDrumsPlay.classList.toggle('playing', listening);
+  el.btnDrumsPlay.querySelector('span').textContent = listening ? '■' : '▶';
+  el.btnDrumsPlay.disabled = rec;
+  el.btnDrumsUndo.disabled = rec || !hasOwnDrums();
+  el.btnDrumsClear.disabled = rec || !hasOwnDrums();
+  el.drumsHint.textContent = rec ? 'うたに あわせて たたこう！' : (hasOwnDrums() ? '● で もっと かさねる' : '● を おして たたこう');
+}
+
+/** ドラム画面のタイムライン：曲全体を横幅に収め、楽器ごとの段に叩いた位置を出す */
+function drawDrumTimeline() {
+  if (!state.drumScreen) return;
+  const cv = el.drumTimeline;
+  const g = cv.getContext('2d');
+  const W = cv.width, H = cv.height;
+  g.clearRect(0, 0, W, H);
+  const dur = state.duration || 1;
+  const xOf = (t) => 10 + (t / dur) * (W - 20);
+
+  // 声の高さ（うすく。どこで歌っているかの目安）
+  const tr = state.track;
+  if (tr && tr.f0.length) {
+    let lo = Infinity, hi = 0;
+    for (const f of tr.f0) if (f > 0) { lo = Math.min(lo, f); hi = Math.max(hi, f); }
+    if (hi > 0) {
+      const l = Math.log2(lo) - 0.1, h = Math.log2(hi) + 0.1;
+      g.strokeStyle = 'rgba(58,46,31,0.18)'; g.lineWidth = 5; g.lineCap = 'round'; g.lineJoin = 'round';
+      g.beginPath();
+      let pen = false;
+      for (let i = 0; i < tr.f0.length; i++) {
+        const f = tr.f0[i];
+        if (f <= 0) { pen = false; continue; }
+        const x = xOf(tr.times[i]), y = H - 12 - ((Math.log2(f) - l) / (h - l)) * (H - 24);
+        if (!pen) { g.moveTo(x, y); pen = true; } else g.lineTo(x, y);
+      }
+      g.stroke();
+    }
+  }
+
+  // 楽器ごとの段
+  const laneY = (i) => 14 + (i * (H - 28)) / (KIT.length - 1);
+  for (const ev of state.drumEvents) {
+    const k = kitOf(ev.type);
+    g.fillStyle = k.color;
+    g.beginPath(); g.arc(xOf(ev.t), laneY(KIT.indexOf(k)), 8, 0, Math.PI * 2); g.fill();
+  }
+
+  // 再生位置
+  if (state.playing) {
+    const x = xOf(Math.max(0, Math.min(dur, playheadTime() * state.speed)));
+    g.strokeStyle = state.overdub ? 'rgba(255,59,59,0.9)' : 'rgba(78,205,196,0.95)';
+    g.lineWidth = 5;
+    g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke();
+  }
+}
+
+el.btnDrums.addEventListener('click', openDrums);
+el.btnDrumsDone.addEventListener('click', closeDrums);
+el.btnDrumsRec.addEventListener('click', () => { if (state.overdub) stopPlayback(); else startDrumRec(); });
+el.btnDrumsPlay.addEventListener('click', () => { if (state.playing) stopPlayback(); else startPlayback(0); });
+el.btnDrumsUndo.addEventListener('click', () => {
+  // さいごの 1 回分（● から ■ まで）だけを取り消す
+  const last = state.drumEvents.reduce((m, e) => (e.source === 'overdub' ? Math.max(m, e.pass || 0) : m), -1);
+  if (last < 0) return;
+  if (state.playing) stopPlayback();
+  state.drumEvents = state.drumEvents.filter((e) => !(e.source === 'overdub' && (e.pass || 0) === last));
+  saveDrums();
+  updateDrumButtons();
+  drawDrumTimeline();
+});
+el.btnDrumsClear.addEventListener('click', () => {
+  if (!window.confirm('ドラムを ぜんぶ けしますか？（うたは のこります）')) return;
+  if (state.playing) stopPlayback();
+  state.drumEvents = state.drumEvents.filter((e) => e.source !== 'overdub');
+  saveDrums();
+  updateDrumButtons();
+  drawDrumTimeline();
+});
+for (const node of el.kit.querySelectorAll('.kit-piece')) {
+  node.addEventListener('pointerdown', (e) => { e.preventDefault(); hitKit(node.dataset.type, node); });
 }
 
 // ---------- バージョン表示 ----------

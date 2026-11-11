@@ -98,7 +98,7 @@ export async function saveTake({ pcm, sampleRate, duration, enabled, drums = [] 
     sampleRate,
     duration,
     enabled: { ...enabled },
-    drums: drums.map((d) => ({ t: d.t, type: d.type, source: d.source || 'rec', ...(d.decay ? { decay: d.decay } : {}) })),
+    drums: drums.map((d) => ({ t: d.t, type: d.type, source: d.source || 'rec', ...(d.decay ? { decay: d.decay } : {}), ...(d.pass ? { pass: d.pass } : {}) })),
     pcm: toInt16(pcm).buffer,
   };
   await tx(db, 'readwrite', (s) => s.put(rec));
@@ -153,7 +153,7 @@ export async function updateDrums(id, drums) {
     req.onerror = () => reject(req.error);
   });
   if (!rec) return;
-  rec.drums = drums.map((d) => ({ t: d.t, type: d.type, source: d.source || 'rec', ...(d.decay ? { decay: d.decay } : {}) }));
+  rec.drums = drums.map((d) => ({ t: d.t, type: d.type, source: d.source || 'rec', ...(d.decay ? { decay: d.decay } : {}), ...(d.pass ? { pass: d.pass } : {}) }));
   await tx(db, 'readwrite', (s) => s.put(rec));
 }
 

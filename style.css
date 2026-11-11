@@ -212,21 +212,36 @@ body {
 .library-list { overflow-y: auto; }
 .screen.library { }
 
-/* ドラム・シンバル（v0.7） */
-.pads { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; width: 100%; max-width: 900px; }
-.pad {
-  border: none; border-radius: 22px; padding: 12px 8px; min-height: 92px;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
-  color: var(--ink); box-shadow: var(--shadow); cursor: pointer; touch-action: manipulation;
-  transition: transform 0.05s ease;
-}
-.pad.drum { background: #f3d9c4; }
-.pad.cymbal { background: #fbefc4; }
-.pad .pad-icon { font-size: 44px; line-height: 1; display: flex; align-items: center; height: 44px; }
-.pad .pad-label { font-size: 14px; }
-.pad.hit { transform: translateY(4px) scale(0.97); box-shadow: 0 3px 0 rgba(0, 0, 0, 0.12); filter: brightness(1.08); }
 .pill:disabled { opacity: 0.4; cursor: default; }
-.pill.overdub.on { background: #ffe1e1; box-shadow: 0 0 0 3px #ff6b6b, var(--shadow); }
 .pill.small { font-size: 14px; padding: 10px 14px; opacity: 0.75; }
 .pill[hidden] { display: none; }
 #screen-main { padding-bottom: 28px; }
+
+/* ドラム画面（v0.8） */
+.wide-btn {
+  width: 100%; max-width: 900px; border: none; border-radius: 22px; padding: 16px 12px; font-size: 22px;
+  background: #f3d9c4; color: var(--ink); box-shadow: var(--shadow); cursor: pointer;
+}
+.wide-btn:disabled { opacity: 0.4; cursor: default; }
+.wide-btn:active:not(:disabled) { transform: translateY(3px); }
+.drums-screen {
+  position: fixed; inset: 0; z-index: 8; background: var(--bg);
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  padding: max(12px, env(safe-area-inset-top)) 12px max(12px, env(safe-area-inset-bottom));
+  overflow-y: auto;
+}
+.drums-screen[hidden] { display: none; }
+.drums-head { width: 100%; max-width: 900px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.drums-head .hint { text-align: left; font-size: 16px; min-height: 0; }
+#drum-timeline { width: 100%; max-width: 900px; height: auto; aspect-ratio: 900 / 170; background: var(--panel); border-radius: 16px; box-shadow: var(--shadow); }
+.kit { width: 100%; max-width: 620px; flex: 1 1 auto; min-height: 0; max-height: 62vh; touch-action: none; user-select: none; -webkit-user-select: none; }
+.kit-piece { cursor: pointer; transform-box: fill-box; transform-origin: center; transition: transform 0.05s ease, filter 0.05s ease; }
+.kit-piece.hit { transform: scale(0.93); filter: brightness(1.15); }
+.drums-controls { width: 100%; max-width: 620px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.drums-screen .pill { white-space: nowrap; flex: 0 0 auto; }
+.drums-controls .pill { padding: 12px 14px; font-size: 16px; }
+.drums-controls .pill { justify-self: center; }
+.big-round.drums-rec { width: 96px; height: 96px; font-size: 44px; background: var(--record-idle); }
+.big-round.drums-rec.recording { background: var(--record-active); animation: pulse 1s infinite; }
+.big-round.drums-play { width: 76px; height: 76px; font-size: 32px; }
+.drums-controls .big-round { flex: 0 0 auto; }

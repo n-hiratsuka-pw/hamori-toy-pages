@@ -1,4 +1,5 @@
-// drums.js — ドラム・シンバルの合成音と、叩いたタイミングの記録・整列（依存なし）
+// drums.js — ドラムセットの合成音（依存なし）。v0.8 で声の録音とドラムの打ち込みを分離した。
+// alignHits／cleanDrumBleed／maskDrumPitch は、v0.7 で「歌いながら叩いた」録音（source: 'rec'）を開くための互換処理。
 //
 // 設計（docs/03_設計書.md §5.8）
 //  - 音はサンプルを使わず Web Audio で合成（外部ファイル・通信なし）
@@ -6,7 +7,26 @@
 //  - スピーカー → マイクの回り込みで録音側にもドラム音が入るため、
 //    録音波形の立ち上がりに合わせてタイミングを補正する（alignHits）
 
-export const DRUM_TYPES = ['drum', 'cymbal'];
+/**
+ * ドラムセットの構成（v0.8）。family は設定の適用先（drum: 大きさ・音の高さ／cymbal: 大きさ・ひびきの長さ）。
+ * 配列の順はタイムラインの段の順（上から）。
+ * 旧データの type 'drum' は kick、'cymbal' は v0.7 の乾いたシンバルとして鳴らす。
+ */
+export const KIT = [
+  { type: 'crash', label: 'クラッシュ', family: 'cymbal', color: '#e9b949' },
+  { type: 'ride', label: 'ライド', family: 'cymbal', color: '#d4a017' },
+  { type: 'hihat', label: 'ハイハット', family: 'cymbal', color: '#c9b458' },
+  { type: 'tomHigh', label: 'タム（たかい）', family: 'drum', color: '#e76f51' },
+  { type: 'tomMid', label: 'タム（ひくい）', family: 'drum', color: '#d1495b' },
+  { type: 'tomFloor', label: 'フロアタム', family: 'drum', color: '#9c3848' },
+  { type: 'snare', label: 'スネア', family: 'drum', color: '#4a90e2' },
+  { type: 'kick', label: 'バスドラム', family: 'drum', color: '#6b4226' },
+];
+const LEGACY = { drum: 'kick', cymbal: 'crash' };
+/** type から KIT の定義を返す（旧 type も解決） */
+export function kitOf(type) {
+  return KIT.find((k) => k.type === type) || KIT.find((k) => k.type === LEGACY[type]) || KIT[KIT.length - 1];
+}
 
 let noiseCache = new WeakMap();
 function noiseBuffer(ctx) {
@@ -93,17 +113,106 @@ function playCymbal(ctx, dest, when, decay = 1) {
   s.start(when, Math.random()); s.stop(when + 0.03);
 }
 
+/** スネア：短い胴の音＋ノイズ（スナッピー） */
+function playSnare(ctx, dest, when, tune = 1) {
+  const o = ctx.createOscillator();
+  const g = ctx.createGain();
+  o.type = 'triangle';
+  o.frequency.setValueAtTime(200 * tune, when);
+  o.frequency.exponentialRampToValueAtTime(140 * tune, when + 0.08);
+  g.gain.setValueAtTime(0.45, when);
+  g.gain.exponentialRampToValueAtTime(0.001, when + 0.13);
+  o.connect(g); g.connect(dest);
+  o.start(when); o.stop(when + 0.15);
+
+  const n = ctx.createBufferSource();
+  n.buffer = noiseBuffer(ctx);
+  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 1400;
+  const pk = ctx.createBiquadFilter(); pk.type = 'peaking'; pk.frequency.value = 4200; pk.gain.value = 4; pk.Q.value = 0.8;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0.0001, when);
+  ng.gain.exponentialRampToValueAtTime(0.4, when + 0.002);
+  ng.gain.exponentialRampToValueAtTime(0.001, when + 0.19);
+  n.connect(hp); hp.connect(pk); pk.connect(ng); ng.connect(dest);
+  n.start(when, Math.random()); n.stop(when + 0.2);
+}
+
+/** タム：ピッチが少し下がるサイン波＋短いアタック。f0 は落ち着く先の周波数 */
+function playTom(ctx, dest, when, f0, len, tune = 1) {
+  const f = f0 * tune;
+  const o = ctx.createOscillator();
+  const g = ctx.createGain();
+  o.type = 'sine';
+  o.frequency.setValueAtTime(f * 1.6, when);
+  o.frequency.exponentialRampToValueAtTime(f, when + 0.1);
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(0.65, when + 0.004);
+  g.gain.exponentialRampToValueAtTime(0.001, when + len);
+  o.connect(g); g.connect(dest);
+  o.start(when); o.stop(when + len + 0.02);
+
+  const n = ctx.createBufferSource();
+  n.buffer = noiseBuffer(ctx);
+  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = Math.min(6000, f * 9); bp.Q.value = 0.9;
+  const ng = ctx.createGain();
+  ng.gain.setValueAtTime(0.28, when);
+  ng.gain.exponentialRampToValueAtTime(0.001, when + 0.03);
+  n.connect(bp); bp.connect(ng); ng.connect(dest);
+  n.start(when, Math.random()); n.stop(when + 0.04);
+}
+
+/** ハイハット（閉じた音）：ごく短い高域ノイズ */
+function playHat(ctx, dest, when, decay = 1) {
+  const n = ctx.createBufferSource();
+  n.buffer = noiseBuffer(ctx);
+  const hp1 = ctx.createBiquadFilter(); hp1.type = 'highpass'; hp1.frequency.value = 8000;
+  const hp2 = ctx.createBiquadFilter(); hp2.type = 'highpass'; hp2.frequency.value = 8000;
+  const g = ctx.createGain();
+  const len = 0.07 * Math.min(2, Math.max(0.6, decay));
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(0.45, when + 0.001);
+  g.gain.exponentialRampToValueAtTime(0.001, when + len);
+  n.connect(hp1); hp1.connect(hp2); hp2.connect(g); g.connect(dest);
+  n.start(when, Math.random()); n.stop(when + len + 0.01);
+}
+
+/** ライド：5〜8 kHz 帯のノイズで「チーン」ではなく「チン」と短く。音程のある成分は入れない */
+function playRide(ctx, dest, when, decay = 1) {
+  const n = ctx.createBufferSource();
+  n.buffer = noiseBuffer(ctx);
+  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 6500; bp.Q.value = 1.4;
+  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 4500;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(0.7, when + 0.002);
+  g.gain.exponentialRampToValueAtTime(0.16, when + 0.06);
+  g.gain.exponentialRampToValueAtTime(0.001, when + 0.45 * decay);
+  n.connect(bp); bp.connect(hp); hp.connect(g); g.connect(dest);
+  n.start(when, Math.random()); n.stop(when + 0.5 * decay);
+}
+
 /**
  * 1 打を鳴らす。
+ * @param {string} type KIT の type（旧 'drum'／'cymbal' も可）
  * @param {{level?:number, tune?:number, decay?:number}} [opts]
- *   level 音量（0〜1.2）、tune ドラムの高さ倍率、decay シンバルの余韻倍率
+ *   level 音量（0〜1.2）、tune 太鼓類の高さ倍率、decay シンバル類の余韻倍率
  */
 export function playHit(ctx, dest, type, when = ctx.currentTime, opts = {}) {
   const lv = ctx.createGain();
   lv.gain.value = opts.level ?? 1;
   lv.connect(dest);
-  if (type === 'cymbal') playCymbal(ctx, lv, when, opts.decay ?? 1);
-  else playDrum(ctx, lv, when, opts.tune ?? 1);
+  const tune = opts.tune ?? 1, decay = opts.decay ?? 1;
+  switch (type) {
+    case 'cymbal': playCymbal(ctx, lv, when, decay); break;        // 旧データ
+    case 'crash': playCymbal(ctx, lv, when, decay * 1.7); break;
+    case 'ride': playRide(ctx, lv, when, decay); break;
+    case 'hihat': playHat(ctx, lv, when, decay); break;
+    case 'snare': playSnare(ctx, lv, when, tune); break;
+    case 'tomHigh': playTom(ctx, lv, when, 190, 0.32, tune); break;
+    case 'tomMid': playTom(ctx, lv, when, 140, 0.38, tune); break;
+    case 'tomFloor': playTom(ctx, lv, when, 92, 0.5, tune); break;
+    default: playDrum(ctx, lv, when, tune);                          // kick・旧 'drum'
+  }
 }
 
 /**
