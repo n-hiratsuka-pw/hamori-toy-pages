@@ -231,10 +231,8 @@ body {
   overflow-y: auto;
 }
 .drums-screen[hidden] { display: none; }
-.drums-head { width: 100%; max-width: 900px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.drums-head .hint { text-align: left; font-size: 16px; min-height: 0; }
 #drum-timeline { width: 100%; max-width: 900px; height: auto; aspect-ratio: 900 / 170; background: var(--panel); border-radius: 16px; box-shadow: var(--shadow); }
-.kit { width: 100%; max-width: 620px; flex: 1 1 auto; min-height: 0; max-height: 62vh; touch-action: none; user-select: none; -webkit-user-select: none; }
+.kit { width: 100%; max-width: 620px; flex: 1 1 auto; min-height: 0; max-height: 68vh; touch-action: none; user-select: none; -webkit-user-select: none; }
 .kit-piece { cursor: pointer; transform-box: fill-box; transform-origin: center; transition: transform 0.05s ease, filter 0.05s ease; }
 .kit-piece.hit { transform: scale(0.93); filter: brightness(1.15); }
 .drums-controls { width: 100%; max-width: 620px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -245,3 +243,9 @@ body {
 .big-round.drums-rec.recording { background: var(--record-active); animation: pulse 1s infinite; }
 .big-round.drums-play { width: 76px; height: 76px; font-size: 32px; }
 .drums-controls .big-round { flex: 0 0 auto; }
+.done-btn {
+  width: min(80%, 360px); border: none; border-radius: 999px; padding: 16px 20px; font-size: 26px; font-weight: bold;
+  background: var(--play); color: #fff; box-shadow: var(--shadow); cursor: pointer; flex: 0 0 auto;
+}
+.done-btn:active { transform: translateY(3px); }
+#screen-main { padding-top: 8px; }

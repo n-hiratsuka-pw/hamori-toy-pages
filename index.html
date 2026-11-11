@@ -13,7 +13,6 @@
     <button id="btn-settings" class="gear" aria-label="設定（保護者用）">⚙</button>
     <!-- メイン画面（録音・再生・ハモリをすべてここで） -->
     <section id="screen-main" class="screen active">
-      <div class="hint" id="record-hint">まるいボタンをおして、うたってね</div>
       <canvas id="pitch-canvas" width="900" height="440"></canvas>
       <div class="controls main-controls">
         <button id="btn-record" class="big-round" aria-label="録音"><span class="mic">🎤</span></button>
@@ -35,46 +34,42 @@
 
     <!-- ドラム画面（声の録音のあとで、ドラムセットを打ち込む） -->
     <div id="screen-drums" class="drums-screen" hidden>
-      <div class="drums-head">
-        <div class="hint" id="drums-hint">● を おして たたこう</div>
-        <button id="btn-drums-done" class="pill primary" aria-label="できた">✓ できた</button>
-      </div>
       <canvas id="drum-timeline" width="900" height="170"></canvas>
-      <svg id="kit" class="kit" viewBox="0 0 400 320" role="group" aria-label="ドラムセット">
-        <!-- スタンド -->
+      <svg id="kit" class="kit" viewBox="0 0 400 360" role="group" aria-label="ドラムセット">
+        <!-- スタンド（太鼓の後ろに隠れる） -->
         <g stroke="#8a8a8a" stroke-width="4" stroke-linecap="round">
-          <line x1="72" y1="58" x2="72" y2="200"/><line x1="332" y1="56" x2="332" y2="170"/>
-          <line x1="50" y1="140" x2="50" y2="305"/>
+          <line x1="78" y1="44" x2="78" y2="198"/><line x1="322" y1="44" x2="322" y2="196"/>
+          <line x1="50" y1="166" x2="50" y2="352"/>
         </g>
         <g class="kit-piece" data-type="kick" role="button" aria-label="バスドラム">
-          <circle cx="212" cy="252" r="64" fill="#b23a48"/><circle cx="212" cy="252" r="54" fill="#fdf6e3" stroke="#6b4226" stroke-width="3"/>
-          <circle cx="212" cy="252" r="14" fill="#6b4226" opacity="0.25"/>
+          <circle cx="205" cy="306" r="46" fill="#b23a48"/><circle cx="205" cy="306" r="38" fill="#fdf6e3" stroke="#6b4226" stroke-width="3"/>
+          <circle cx="205" cy="306" r="10" fill="#6b4226" opacity="0.25"/>
         </g>
         <g class="kit-piece" data-type="tomHigh" role="button" aria-label="タム（たかい）">
-          <circle cx="150" cy="120" r="40" fill="#e76f51"/><circle cx="150" cy="120" r="32" fill="#fdf6e3" stroke="#9c3d2a" stroke-width="2.5"/>
+          <circle cx="150" cy="148" r="52" fill="#e76f51"/><circle cx="150" cy="148" r="43" fill="#fdf6e3" stroke="#9c3d2a" stroke-width="3"/>
         </g>
         <g class="kit-piece" data-type="tomMid" role="button" aria-label="タム（ひくい）">
-          <circle cx="240" cy="122" r="44" fill="#d1495b"/><circle cx="240" cy="122" r="36" fill="#fdf6e3" stroke="#8f2f3d" stroke-width="2.5"/>
+          <circle cx="262" cy="148" r="54" fill="#d1495b"/><circle cx="262" cy="148" r="45" fill="#fdf6e3" stroke="#8f2f3d" stroke-width="3"/>
         </g>
         <g class="kit-piece" data-type="snare" role="button" aria-label="スネア">
-          <circle cx="103" cy="212" r="47" fill="#4a90e2"/><circle cx="103" cy="212" r="38" fill="#fdf6e3" stroke="#2f5f9a" stroke-width="2.5"/>
-          <line x1="72" y1="212" x2="134" y2="212" stroke="#2f5f9a" stroke-width="1.5" opacity="0.4"/>
+          <circle cx="90" cy="258" r="58" fill="#4a90e2"/><circle cx="90" cy="258" r="48" fill="#fdf6e3" stroke="#2f5f9a" stroke-width="3"/>
+          <line x1="52" y1="258" x2="128" y2="258" stroke="#2f5f9a" stroke-width="1.5" opacity="0.4"/>
         </g>
         <g class="kit-piece" data-type="tomFloor" role="button" aria-label="フロアタム">
-          <circle cx="325" cy="212" r="52" fill="#9c3848"/><circle cx="325" cy="212" r="43" fill="#fdf6e3" stroke="#6a2531" stroke-width="2.5"/>
+          <circle cx="328" cy="260" r="62" fill="#9c3848"/><circle cx="328" cy="260" r="52" fill="#fdf6e3" stroke="#6a2531" stroke-width="3"/>
         </g>
         <g class="kit-piece" data-type="hihat" role="button" aria-label="ハイハット">
-          <ellipse cx="50" cy="140" rx="50" ry="26" fill="transparent"/>
-          <ellipse cx="50" cy="145" rx="46" ry="14" fill="#b89b3c"/><ellipse cx="50" cy="138" rx="46" ry="14" fill="#e3cc6a" stroke="#9c8530" stroke-width="2"/>
-          <ellipse cx="50" cy="136" rx="9" ry="3.5" fill="#f3e39a"/>
+          <ellipse cx="50" cy="166" rx="50" ry="23" fill="transparent"/>
+          <ellipse cx="50" cy="171" rx="48" ry="15" fill="#b89b3c"/><ellipse cx="50" cy="164" rx="48" ry="15" fill="#e3cc6a" stroke="#9c8530" stroke-width="2"/>
+          <ellipse cx="50" cy="162" rx="10" ry="4" fill="#f3e39a"/>
         </g>
         <g class="kit-piece" data-type="crash" role="button" aria-label="クラッシュ">
-          <ellipse cx="74" cy="50" rx="68" ry="34" fill="transparent"/>
-          <ellipse cx="74" cy="52" rx="62" ry="20" fill="#e9b949" stroke="#b8860b" stroke-width="2.5"/><ellipse cx="74" cy="49" rx="13" ry="5" fill="#f6d77a" stroke="#b8860b" stroke-width="1.5"/>
+          <ellipse cx="78" cy="42" rx="80" ry="34" fill="transparent"/>
+          <ellipse cx="78" cy="44" rx="76" ry="25" fill="#e9b949" stroke="#b8860b" stroke-width="2.5"/><ellipse cx="78" cy="40" rx="15" ry="6" fill="#f6d77a" stroke="#b8860b" stroke-width="1.5"/>
         </g>
         <g class="kit-piece" data-type="ride" role="button" aria-label="ライド">
-          <ellipse cx="330" cy="50" rx="68" ry="34" fill="transparent"/>
-          <ellipse cx="330" cy="52" rx="64" ry="21" fill="#d4a017" stroke="#9a7410" stroke-width="2.5"/><ellipse cx="330" cy="48" rx="15" ry="6" fill="#edc94f" stroke="#9a7410" stroke-width="1.5"/>
+          <ellipse cx="322" cy="42" rx="80" ry="34" fill="transparent"/>
+          <ellipse cx="322" cy="44" rx="76" ry="25" fill="#d4a017" stroke="#9a7410" stroke-width="2.5"/><ellipse cx="322" cy="40" rx="17" ry="7" fill="#edc94f" stroke="#9a7410" stroke-width="1.5"/>
         </g>
       </svg>
       <div class="drums-controls">
@@ -83,6 +78,7 @@
         <button id="btn-drums-play" class="big-round play drums-play" aria-label="きく"><span>▶</span></button>
         <button id="btn-drums-clear" class="pill small" aria-label="ドラムを ぜんぶ けす" disabled>🗑 けす</button>
       </div>
+      <button id="btn-drums-done" class="done-btn" aria-label="できた">✓ できた</button>
     </div>
 
     <!-- きろく一覧（シート） -->

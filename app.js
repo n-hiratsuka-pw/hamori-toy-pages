@@ -40,7 +40,6 @@ const el = {
   speeds: $('speeds'),
   meter: $('meter-bar'),
   timer: $('timer'),
-  hint: $('record-hint'),
   canvas: $('pitch-canvas'),
   switches: $('switches'),
   busy: $('busy'),
@@ -56,7 +55,6 @@ const el = {
   presetList: $('preset-list'),
   btnDrums: $('btn-drums'),
   screenDrums: $('screen-drums'),
-  drumsHint: $('drums-hint'),
   drumTimeline: $('drum-timeline'),
   kit: $('kit'),
   btnDrumsDone: $('btn-drums-done'),
@@ -264,7 +262,6 @@ async function startRecording() {
   el.btnRecord.classList.add('recording');
   el.btnPlay.disabled = true;
   el.btnDrums.disabled = true;
-  el.hint.textContent = 'うたったら もういちど おしてね';
   tickRecording();
 }
 
@@ -319,7 +316,7 @@ async function stopRecording() {
   state.chunks = [];
 
   if (pcm.length < MIN_SECONDS * state.sampleRate) {
-    el.hint.textContent = 'もうすこし ながく うたってみてね';
+    showError('もうすこし ながく うたってみてね');
     el.timer.textContent = '0';
     state.live = [];
     drawCanvas();
@@ -365,7 +362,6 @@ async function processRecording(autoplay = false) {
   updateFavoriteButton();
   el.btnPlay.disabled = false;
   el.btnDrums.disabled = false;
-  el.hint.textContent = 'スイッチを おして、▶ で きいてね';
   state.live = [];
   showScreen('main');
   drawCanvas();
@@ -984,7 +980,6 @@ function updateDrumButtons() {
   el.btnDrumsPlay.disabled = rec;
   el.btnDrumsUndo.disabled = rec || !hasOwnDrums();
   el.btnDrumsClear.disabled = rec || !hasOwnDrums();
-  el.drumsHint.textContent = rec ? 'うたに あわせて たたこう！' : (hasOwnDrums() ? '● で もっと かさねる' : '● を おして たたこう');
 }
 
 /** ドラム画面のタイムライン：曲全体を横幅に収め、楽器ごとの段に叩いた位置を出す */
