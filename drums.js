@@ -216,19 +216,22 @@ function playHat(ctx, dest, when, decay = 1) {
   shimmer(ctx, dest, when, 'hihat', { peak: 0.08, len: len * 0.8 });
 }
 
-// ---- 録音素材（v0.9.1） ----
-// 本物のドラムの録音（CC0 の Virtuosity Drums。samples/CREDITS.md）を優先して鳴らす。
-// 読み込み前・読み込み失敗時は上の合成音で鳴らす。
-// rate は再生速度（＝音程の倍率）。タム（ひくい）は高いタムを約 4 半音下げて使う。
+// ---- 録音素材（v0.9.2） ----
+// 本物のドラムの録音を優先して鳴らす。読み込み前・読み込み失敗時は上の合成音で鳴らす。
+// v0.9.2：試聴ページでユーザーが選んだ組み合わせ（出典とライセンスは samples/CREDITS.md）
+//   バスドラム Muldjord Kit（CC BY 4.0）／スネア Gogodze Phu Vol II（CC0）／
+//   タム 3 つ DRS Kit（CC BY 4.0）／ハイハット Virtuosity Drums（CC0）／シンバル Big Rusty Drums（CC0）
+// 素材はどれもピーク 0.9 にそろえてあり、gain は試聴ページの 1 打の音量と同じ比率。
+// rate は再生速度（＝音程の倍率）。
 const SAMPLE_MAP = {
-  kick: { files: ['kick_1', 'kick_2'], rate: 1, gain: 0.95, family: 'drum' },
-  snare: { files: ['snare_1', 'snare_2'], rate: 1, gain: 1.0, family: 'drum' },
-  tomHigh: { files: ['htom_1', 'htom_2'], rate: 1, gain: 0.72, family: 'drum' },
-  tomMid: { files: ['htom_1', 'htom_2'], rate: 0.8, gain: 0.75, family: 'drum' },
-  tomFloor: { files: ['ltom_1', 'ltom_2'], rate: 1, gain: 0.75, family: 'drum' },
-  hihat: { files: ['hihat_1', 'hihat_2'], rate: 1, gain: 0.85, family: 'cymbal' },
-  crash: { files: ['crash_1'], rate: 1, gain: 0.62, family: 'cymbal' },
-  ride: { files: ['ride_1'], rate: 1, gain: 0.95, family: 'cymbal' },
+  kick: { files: ['kick'], rate: 1, gain: 1.0, family: 'drum' },
+  snare: { files: ['snare'], rate: 1, gain: 0.98, family: 'drum' },
+  tomHigh: { files: ['tom_high'], rate: 1, gain: 0.92, family: 'drum' },
+  tomMid: { files: ['tom_mid'], rate: 1, gain: 0.92, family: 'drum' },
+  tomFloor: { files: ['tom_floor'], rate: 1, gain: 0.98, family: 'drum' },
+  hihat: { files: ['hihat_1', 'hihat_2'], rate: 1, gain: 0.44, family: 'cymbal' },
+  crash: { files: ['crash'], rate: 1, gain: 0.58, family: 'cymbal' },
+  ride: { files: ['ride'], rate: 1, gain: 0.48, family: 'cymbal' },
 };
 SAMPLE_MAP.drum = SAMPLE_MAP.kick;      // 旧データ
 SAMPLE_MAP.cymbal = SAMPLE_MAP.crash;   // 旧データ
@@ -284,13 +287,8 @@ function playSample(ctx, dest, type, when, opts) {
     g.gain.setValueAtTime(level, when + end * 0.3);
     g.gain.exponentialRampToValueAtTime(0.0001, when + end);
   }
+  // 試聴ページで選んだ音のまま鳴らす（v0.9.1 のバスドラム用イコライザーは v0.9.2 で外した）
   src.connect(g); g.connect(dest);
-  if (type === 'kick' || type === 'drum') {
-    // スマホのスピーカーでも聞こえるよう、ビーターのアタック帯域を少し持ち上げる
-    const eq = ctx.createBiquadFilter();
-    eq.type = 'peaking'; eq.frequency.value = 3200; eq.Q.value = 0.9; eq.gain.value = 5;
-    src.disconnect(); src.connect(eq); eq.connect(g);
-  }
   src.start(when);
   src.stop(when + Math.min(dur, decay < 0.999 ? Math.max(0.08, dur * decay) : dur) + 0.02);
   return true;

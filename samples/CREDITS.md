@@ -1,19 +1,28 @@
 # ドラムの音素材について
 
-このフォルダの WAV は、次の CC0（パブリックドメイン）の録音素材から作成した。
+このフォルダの WAV は、次の録音素材から作成した（v0.9.2、2026-11-12 に試聴ページで選んだ組み合わせ）。
 
-- **Virtuosity Drums**（Versilian Studios／録音: Virtuosity Musical Instruments, Boston／演奏: Austin McMahon）
-- 配布元: https://github.com/sfzinstruments/virtuosity_drums
-- ライセンス: CC0 1.0 Universal（著作権放棄。クレジット表記は義務ではないが、敬意を表して記載する）
+| アプリのパーツ | ファイル | 元の素材 | 作者 | ライセンス |
+|---|---|---|---|---|
+| バスドラム | kick.wav | **MuldjordKit** v1.0 — KdrumL #16 | Lars Muldjord（SFZ 版: kinwie） | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| スネア | snare.wav | **Gogodze Phu Vol II** — sc vl5 rr1 | Karoryfer Lecolds | CC0 1.0 |
+| タム（たかい） | tom_high.wav | **DRSKit** v1.0 — Tom1 #18 | DrumGizmo チーム（Lars Muldjord / Bent Bisballe Nyeng）・Jes Eiler（DRSDrums）（SFZ 版: kinwie） | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| タム（ひくい） | tom_mid.wav | **DRSKit** v1.0 — Tom2 #12 | 同上 | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| フロアタム | tom_floor.wav | **DRSKit** v1.0 — Tom3 #14 | 同上 | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) |
+| ハイハット | hihat_1.wav, hihat_2.wav | **Virtuosity Drums** — hi-hat closed vl4 rr1・rr2 | Versilian Studios（録音: Virtuosity Musical Instruments, Boston／演奏: Austin McMahon） | CC0 1.0 |
+| クラッシュ | crash.wav | **Big Rusty Drums** — crash_17 cr vl4 rr1 | Karoryfer Lecolds | CC0 1.0 |
+| ライド | ride.wav | **Big Rusty Drums** — ride_22 rd vl7 rr1 | Karoryfer Lecolds | CC0 1.0 |
 
-作り方: 各パーツの 1 打について、近接マイク・ミッド・オーバーヘッド・ルームの各マイクを混ぜてモノラルにし、立ち上がりの前の無音と末尾を切り詰めた（`../../tools/mix_kit.py`）。
+## 配布元
 
-| ファイル | 元の素材 | アプリでの使い方 |
-|---|---|---|
-| kick_1, kick_2 | kick（スネア響き線オフ）vl4 rr1・rr2 | バスドラム（交互に鳴らす） |
-| snare_1, snare_2 | snare center vl28・vl30 | スネア |
-| htom_1, htom_2 | high tom center vl12・vl13 | タム（たかい）はそのまま、タム（ひくい）は約 4 半音下げて再生 |
-| ltom_1, ltom_2 | low tom center vl14・vl15 | フロアタム |
-| hihat_1, hihat_2 | hi-hat closed vl4 rr1・rr2 | ハイハット |
-| crash_1 | crash vl3 rr1 | クラッシュ |
-| ride_1 | ride vl3 rr1 | ライド |
+- MuldjordKit: https://github.com/sfzinstruments/DrumGizmo.MuldjordKit
+- DRSKit: https://github.com/sfzinstruments/DrumGizmo.DRSKit
+- Gogodze Phu Vol II: https://github.com/sfzinstruments/karoryfer.gogodze-phu-vol-ii
+- Big Rusty Drums: https://github.com/sfzinstruments/karoryfer.big-rusty-drums
+- Virtuosity Drums: https://github.com/sfzinstruments/virtuosity_drums
+
+## 加工内容（CC BY 4.0 の「変更の表示」）
+
+各パーツについて録音から 1 打を選び、近接マイク・オーバーヘッド・ルームの各マイクを混ぜてモノラルにし、立ち上がり前の無音と末尾を切り詰め、ピークを 0.9 にそろえた。
+作り方は `../../tools/pick_kit.py`（ハイハットは `../../tools/mix_kit.py`）。CC0 の素材はクレジット表記の義務はないが、敬意を表して記載する。
+アプリ画面では「設定（おうちの人用）」の下部に作者名とライセンスを表示している。
