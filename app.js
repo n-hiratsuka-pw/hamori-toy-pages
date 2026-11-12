@@ -6,6 +6,7 @@ import { detectPitch } from './pitch.js';
 import { pitchShiftPSOLA, buildPitchMarks, matchLoudness, HARMONY_PRESETS, DEFAULT_PRESET_IDS } from './psola.js';
 import { APP_VERSION } from './version.js';
 import { playHit, maskDrumPitch, cleanDrumBleed, KIT, kitOf } from './drums.js';
+import { renderKit } from './kit.js';
 import { listTakes, getTake, saveTake, setFavorite, updateEnabled, updateDrums, deleteTake, FAVORITE_MAX } from './store.js';
 
 const MAX_SECONDS = 30;
@@ -919,8 +920,11 @@ function liveDrumBus(ctx) {
 }
 /** ドラムセットの 1 か所を叩く。いつでも音が鳴り、録音中だけ記録する */
 async function hitKit(type, node) {
+  node.classList.remove('hit');
+  void node.getBBox();            // アニメーションを毎回やり直すため
   node.classList.add('hit');
-  setTimeout(() => node.classList.remove('hit'), 90);
+  clearTimeout(node._hitTimer);
+  node._hitTimer = setTimeout(() => node.classList.remove('hit'), node.classList.contains('cymbal-piece') ? 420 : 120);
   let ctx;
   try { ctx = await ensureContext(); } catch (_) { return; }
   playHit(ctx, liveDrumBus(ctx), type, ctx.currentTime, hitOpts(type));
@@ -999,7 +1003,7 @@ function drawDrumTimeline() {
     for (const f of tr.f0) if (f > 0) { lo = Math.min(lo, f); hi = Math.max(hi, f); }
     if (hi > 0) {
       const l = Math.log2(lo) - 0.1, h = Math.log2(hi) + 0.1;
-      g.strokeStyle = 'rgba(58,46,31,0.18)'; g.lineWidth = 5; g.lineCap = 'round'; g.lineJoin = 'round';
+      g.strokeStyle = 'rgba(255,255,255,0.16)'; g.lineWidth = 5; g.lineCap = 'round'; g.lineJoin = 'round';
       g.beginPath();
       let pen = false;
       for (let i = 0; i < tr.f0.length; i++) {
@@ -1051,6 +1055,7 @@ el.btnDrumsClear.addEventListener('click', () => {
   updateDrumButtons();
   drawDrumTimeline();
 });
+renderKit(el.kit);
 for (const node of el.kit.querySelectorAll('.kit-piece')) {
   node.addEventListener('pointerdown', (e) => { e.preventDefault(); hitKit(node.dataset.type, node); });
 }

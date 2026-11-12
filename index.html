@@ -35,43 +35,7 @@
     <!-- ドラム画面（声の録音のあとで、ドラムセットを打ち込む） -->
     <div id="screen-drums" class="drums-screen" hidden>
       <canvas id="drum-timeline" width="900" height="170"></canvas>
-      <svg id="kit" class="kit" viewBox="0 0 400 360" role="group" aria-label="ドラムセット">
-        <!-- スタンド（太鼓の後ろに隠れる） -->
-        <g stroke="#8a8a8a" stroke-width="4" stroke-linecap="round">
-          <line x1="78" y1="44" x2="78" y2="198"/><line x1="322" y1="44" x2="322" y2="196"/>
-          <line x1="50" y1="166" x2="50" y2="352"/>
-        </g>
-        <g class="kit-piece" data-type="kick" role="button" aria-label="バスドラム">
-          <circle cx="205" cy="306" r="46" fill="#b23a48"/><circle cx="205" cy="306" r="38" fill="#fdf6e3" stroke="#6b4226" stroke-width="3"/>
-          <circle cx="205" cy="306" r="10" fill="#6b4226" opacity="0.25"/>
-        </g>
-        <g class="kit-piece" data-type="tomHigh" role="button" aria-label="タム（たかい）">
-          <circle cx="150" cy="148" r="52" fill="#e76f51"/><circle cx="150" cy="148" r="43" fill="#fdf6e3" stroke="#9c3d2a" stroke-width="3"/>
-        </g>
-        <g class="kit-piece" data-type="tomMid" role="button" aria-label="タム（ひくい）">
-          <circle cx="262" cy="148" r="54" fill="#d1495b"/><circle cx="262" cy="148" r="45" fill="#fdf6e3" stroke="#8f2f3d" stroke-width="3"/>
-        </g>
-        <g class="kit-piece" data-type="snare" role="button" aria-label="スネア">
-          <circle cx="90" cy="258" r="58" fill="#4a90e2"/><circle cx="90" cy="258" r="48" fill="#fdf6e3" stroke="#2f5f9a" stroke-width="3"/>
-          <line x1="52" y1="258" x2="128" y2="258" stroke="#2f5f9a" stroke-width="1.5" opacity="0.4"/>
-        </g>
-        <g class="kit-piece" data-type="tomFloor" role="button" aria-label="フロアタム">
-          <circle cx="328" cy="260" r="62" fill="#9c3848"/><circle cx="328" cy="260" r="52" fill="#fdf6e3" stroke="#6a2531" stroke-width="3"/>
-        </g>
-        <g class="kit-piece" data-type="hihat" role="button" aria-label="ハイハット">
-          <ellipse cx="50" cy="166" rx="50" ry="23" fill="transparent"/>
-          <ellipse cx="50" cy="171" rx="48" ry="15" fill="#b89b3c"/><ellipse cx="50" cy="164" rx="48" ry="15" fill="#e3cc6a" stroke="#9c8530" stroke-width="2"/>
-          <ellipse cx="50" cy="162" rx="10" ry="4" fill="#f3e39a"/>
-        </g>
-        <g class="kit-piece" data-type="crash" role="button" aria-label="クラッシュ">
-          <ellipse cx="78" cy="42" rx="80" ry="34" fill="transparent"/>
-          <ellipse cx="78" cy="44" rx="76" ry="25" fill="#e9b949" stroke="#b8860b" stroke-width="2.5"/><ellipse cx="78" cy="40" rx="15" ry="6" fill="#f6d77a" stroke="#b8860b" stroke-width="1.5"/>
-        </g>
-        <g class="kit-piece" data-type="ride" role="button" aria-label="ライド">
-          <ellipse cx="322" cy="42" rx="80" ry="34" fill="transparent"/>
-          <ellipse cx="322" cy="44" rx="76" ry="25" fill="#d4a017" stroke="#9a7410" stroke-width="2.5"/><ellipse cx="322" cy="40" rx="17" ry="7" fill="#edc94f" stroke="#9a7410" stroke-width="1.5"/>
-        </g>
-      </svg>
+      <svg id="kit" class="kit" viewBox="0 0 400 430" role="group" aria-label="ドラムセット"></svg>
       <div class="drums-controls">
         <button id="btn-drums-undo" class="pill" aria-label="さいごの ろくおんを もどす" disabled>↩ もどす</button>
         <button id="btn-drums-rec" class="big-round drums-rec" aria-label="ドラムを ろくおん"><span>●</span></button>

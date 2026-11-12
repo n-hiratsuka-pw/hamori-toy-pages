@@ -231,10 +231,18 @@ body {
   overflow-y: auto;
 }
 .drums-screen[hidden] { display: none; }
-#drum-timeline { width: 100%; max-width: 900px; height: auto; aspect-ratio: 900 / 170; background: var(--panel); border-radius: 16px; box-shadow: var(--shadow); }
-.kit { width: 100%; max-width: 620px; flex: 1 1 auto; min-height: 0; max-height: 68vh; touch-action: none; user-select: none; -webkit-user-select: none; }
-.kit-piece { cursor: pointer; transform-box: fill-box; transform-origin: center; transition: transform 0.05s ease, filter 0.05s ease; }
-.kit-piece.hit { transform: scale(0.93); filter: brightness(1.15); }
+#drum-timeline { width: 100%; max-width: 900px; height: auto; aspect-ratio: 900 / 170; background: #1d1d21; border-radius: 16px; box-shadow: 0 4px 0 rgba(0,0,0,0.5); }
+.kit { width: 100%; max-width: 620px; flex: 1 1 auto; min-height: 0; max-height: 70vh; border-radius: 18px; touch-action: none; user-select: none; -webkit-user-select: none; }
+.kit-piece { cursor: pointer; transform-box: fill-box; transform-origin: center; }
+.drum-piece.hit { animation: drum-hit 0.12s ease-out; }
+.cymbal-piece.hit { animation: cymbal-hit 0.42s ease-out; }
+@keyframes drum-hit { 0% { transform: scale(0.95); filter: url(#kf-shadow) brightness(1.25); } 100% { transform: scale(1); } }
+@keyframes cymbal-hit {
+  0% { transform: scale(0.94, 0.86) rotate(-2deg); filter: url(#kf-shadow) brightness(1.35); }
+  35% { transform: scale(1.02, 0.97) rotate(1.5deg); }
+  70% { transform: scale(0.99, 1.01) rotate(-0.6deg); }
+  100% { transform: none; }
+}
 .drums-controls { width: 100%; max-width: 620px; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .drums-screen .pill { white-space: nowrap; flex: 0 0 auto; }
 .drums-controls .pill { padding: 12px 14px; font-size: 16px; }
@@ -249,3 +257,9 @@ body {
 }
 .done-btn:active { transform: translateY(3px); }
 #screen-main { padding-top: 8px; }
+/* ドラム画面は本物らしく暗いステージ調（v0.8.2） */
+.drums-screen { background: radial-gradient(ellipse at 50% 40%, #26262b 0%, #0f0f11 75%); color: #eee; }
+.drums-screen .pill { background: #2c2c32; color: #eee; box-shadow: 0 4px 0 rgba(0, 0, 0, 0.55); }
+.drums-screen .pill:disabled { opacity: 0.35; }
+.drums-screen .big-round { box-shadow: 0 6px 0 rgba(0, 0, 0, 0.55); }
+.drums-screen .done-btn { box-shadow: 0 6px 0 rgba(0, 0, 0, 0.55); }
