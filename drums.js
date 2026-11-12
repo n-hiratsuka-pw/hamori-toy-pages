@@ -32,7 +32,7 @@ let noiseCache = new WeakMap();
 function noiseBuffer(ctx) {
   let b = noiseCache.get(ctx);
   if (!b) {
-    const len = Math.floor(ctx.sampleRate * 2);
+    const len = Math.floor(ctx.sampleRate * 3);
     b = ctx.createBuffer(1, len, ctx.sampleRate);
     const d = b.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
@@ -41,154 +41,179 @@ function noiseBuffer(ctx) {
   return b;
 }
 
-/**
- * バスドラム風：ピッチが下がるサイン波＋アタックのクリック＋胴鳴り
- * @param {number} tune 音の高さの倍率（0.6〜1.6、1 = 標準）
- */
-function playDrum(ctx, dest, when, tune = 1) {
+// ---- 部品 ----
+// 合成の方針（docs/03_設計書.md §5.11）：実機の録音（利用者提供の参考演奏）を計測し、
+// 帯域ごとの強さ・減衰・音程が近くなるように合わせた。録音の音そのものは使っていない。
+
+/** 白色雑音のソース（ループ再生、開始位置はランダム） */
+function noise(ctx, when, len) {
+  const n = ctx.createBufferSource();
+  n.buffer = noiseBuffer(ctx);
+  n.loop = true;
+  n.start(when, Math.random() * 2.5);
+  n.stop(when + len + 0.05);
+  return n;
+}
+function biquad(ctx, type, freq, q = 0.707, gain = 0) {
+  const f = ctx.createBiquadFilter();
+  f.type = type; f.frequency.value = freq; f.Q.value = q; f.gain.value = gain;
+  return f;
+}
+/** 減衰エンベロープ：アタック atk 秒でピーク peak、len 秒で −60 dB */
+function env(ctx, when, peak, len, atk = 0.002) {
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, when);
+  g.gain.exponentialRampToValueAtTime(peak, when + atk);
+  g.gain.exponentialRampToValueAtTime(peak * 0.001, when + atk + len);
+  return g;
+}
+function chain(...nodes) { for (let i = 0; i < nodes.length - 1; i++) nodes[i].connect(nodes[i + 1]); return nodes[nodes.length - 1]; }
+
+/** 音程のある膜の振動（周波数 f1 → f2 へ glide 秒で下がる） */
+function membrane(ctx, dest, when, { f1, f2, glide, peak, len, type = 'sine' }) {
+  const o = ctx.createOscillator();
+  o.type = type;
+  o.frequency.setValueAtTime(f1, when);
+  o.frequency.exponentialRampToValueAtTime(f2, when + glide);
+  chain(o, env(ctx, when, peak, len), dest);
+  o.start(when); o.stop(when + len + 0.05);
+}
+
+// ---- 太鼓類 ----
+
+/** バスドラム：54 Hz 付近まで素早く下がり 43 Hz へ落ちる低音＋ビーターのアタック */
+function playKick(ctx, dest, when, tune = 1) {
   const k = tune;
   const o = ctx.createOscillator();
-  const g = ctx.createGain();
   o.type = 'sine';
-  o.frequency.setValueAtTime(160 * k, when);
-  o.frequency.exponentialRampToValueAtTime(48 * k, when + 0.14);
-  g.gain.setValueAtTime(0.0001, when);
-  g.gain.exponentialRampToValueAtTime(0.7, when + 0.004);
-  g.gain.exponentialRampToValueAtTime(0.001, when + 0.45);
-  o.connect(g); g.connect(dest);
-  o.start(when); o.stop(when + 0.5);
+  o.frequency.setValueAtTime(150 * k, when);
+  o.frequency.exponentialRampToValueAtTime(56 * k, when + 0.03);
+  o.frequency.exponentialRampToValueAtTime(43 * k, when + 0.12);
+  chain(o, env(ctx, when, 0.72, 0.26, 0.002), dest);
+  o.start(when); o.stop(when + 0.4);
+  // ビーターのアタック（中〜高域、ごく短く）
+  chain(noise(ctx, when, 0.03), biquad(ctx, 'bandpass', 2800, 0.6), env(ctx, when, 0.6, 0.025, 0.0005), dest);
+  chain(noise(ctx, when, 0.04), biquad(ctx, 'bandpass', 1100, 0.7), env(ctx, when, 0.4, 0.035, 0.0005), dest);
+  // 胴の短い響き
+  chain(noise(ctx, when, 0.2), biquad(ctx, 'bandpass', 380, 0.6), env(ctx, when, 0.05, 0.18, 0.003), dest);
+  chain(noise(ctx, when, 0.3), biquad(ctx, 'bandpass', 1500, 0.4), env(ctx, when, 0.02, 0.26, 0.003), dest);
+  membrane(ctx, dest, when, { f1: 380 * k, f2: 250 * k, glide: 0.02, peak: 0.1, len: 0.05 });
+}
 
-  // スマホのスピーカーでも聞こえるよう、中域のアタック成分を足す
-  const n = ctx.createBufferSource();
-  n.buffer = noiseBuffer(ctx);
-  const f = ctx.createBiquadFilter();
-  f.type = 'bandpass'; f.frequency.value = 1800 * Math.sqrt(k); f.Q.value = 0.8;
-  const ng = ctx.createGain();
-  ng.gain.setValueAtTime(0.35, when);
-  ng.gain.exponentialRampToValueAtTime(0.001, when + 0.035);
-  n.connect(f); f.connect(ng); ng.connect(dest);
-  n.start(when, Math.random()); n.stop(when + 0.05);
+/** スネア：183 Hz の胴鳴り＋2 次モード、響き線（1〜8 kHz のノイズ、胴鳴りより長く残る） */
+function playSnare(ctx, dest, when, tune = 1) {
+  const k = tune;
+  membrane(ctx, dest, when, { f1: 195 * k, f2: 178 * k, glide: 0.08, peak: 0.62, len: 0.22 });
+  membrane(ctx, dest, when, { f1: 345 * k, f2: 330 * k, glide: 0.05, peak: 0.16, len: 0.2 });
+  membrane(ctx, dest, when, { f1: 90 * k, f2: 80 * k, glide: 0.05, peak: 0.14, len: 0.08 });
+  // 響き線（立ち上がりを少し遅らせ、長めに残す）
+  chain(noise(ctx, when, 0.4), biquad(ctx, 'highpass', 900, 0.6), biquad(ctx, 'peaking', 4500, 0.6, 3),
+    biquad(ctx, 'lowpass', 6500, 0.7), env(ctx, when, 0.12, 0.4, 0.012), dest);
+  // スティックのアタック
+  chain(noise(ctx, when, 0.02), biquad(ctx, 'bandpass', 1200, 0.8), env(ctx, when, 0.14, 0.015, 0.0005), dest);
+}
 
-  // 胴鳴り
-  const o2 = ctx.createOscillator();
-  const g2 = ctx.createGain();
-  o2.type = 'triangle';
-  o2.frequency.setValueAtTime(220 * k, when);
-  o2.frequency.exponentialRampToValueAtTime(110 * k, when + 0.1);
-  g2.gain.setValueAtTime(0.25, when);
-  g2.gain.exponentialRampToValueAtTime(0.001, when + 0.18);
-  o2.connect(g2); g2.connect(dest);
-  o2.start(when); o2.stop(when + 0.2);
+/** タム：ほぼ一定の音程で長く鳴る基音＋倍音（2.25 倍）＋胴の響き＋スティックのアタック */
+function playTom(ctx, dest, when, f0, len, tune = 1, over = 0.3, body = 900, stick = 0.55) {
+  const f = f0 * tune;
+  membrane(ctx, dest, when, { f1: f * 1.07, f2: f, glide: 0.18, peak: 0.46, len });
+  membrane(ctx, dest, when, { f1: f * 2.35, f2: f * 2.25, glide: 0.1, peak: 0.46 * over, len: len * 0.6 });
+  membrane(ctx, dest, when, { f1: f * 3.6, f2: f * 3.5, glide: 0.05, peak: 0.06, len: len * 0.25 });
+  // 胴とヘッドの響き（広い帯域の短めの余韻）
+  chain(noise(ctx, when, len * 0.7), biquad(ctx, 'bandpass', body, 0.35), env(ctx, when, 0.1, len * 0.6, 0.004), dest);
+  chain(noise(ctx, when, 0.05), biquad(ctx, 'bandpass', 2500, 0.3), env(ctx, when, stick, 0.04, 0.0005), dest);
+}
+
+// ---- シンバル類 ----
+
+// 金属らしさを出す非整数倍の部分音。数十本を密に重ねた波形を 1 回だけ計算してバッファにする
+// （1 打ごとに発振器を数十個作るとスマホで重いため）。高い部分音ほど早く減衰させる。
+const partialCache = new WeakMap();
+function partialBuffer(ctx, key, { lo, hi, n, seed, len, peaks = [] }) {
+  let m = partialCache.get(ctx);
+  if (!m) { m = new Map(); partialCache.set(ctx, m); }
+  if (m.has(key)) return m.get(key);
+  const sr = ctx.sampleRate, N = Math.floor(sr * len);
+  const buf = ctx.createBuffer(1, N, sr);
+  const d = buf.getChannelData(0);
+  let r = seed;
+  const rnd = () => { r = (r * 1664525 + 1013904223) >>> 0; return r / 4294967296; };
+  const lr = Math.log(hi / lo);
+  for (let i = 0; i < n; i++) {
+    const f = lo * Math.exp(lr * ((i + rnd()) / n));
+    let amp = 0.4 + 0.6 * rnd();
+    for (const p of peaks) amp *= 1 + p.gain * Math.exp(-((Math.log(f / p.f) / 0.18) ** 2));
+    const tau = len * 0.45 * Math.pow(1000 / f, 0.55) * (0.7 + 0.6 * rnd());   // 高い音ほど短い
+    const w = (2 * Math.PI * f) / sr, ph = rnd() * 2 * Math.PI, k = Math.exp(-1 / (tau * sr));
+    let e = amp;
+    for (let j = 0; j < N; j++) { d[j] += e * Math.sin(w * j + ph); e *= k; }
+  }
+  let pk = 0;
+  for (let j = 0; j < N; j++) pk = Math.max(pk, Math.abs(d[j]));
+  for (let j = 0; j < N; j++) d[j] /= pk || 1;
+  m.set(key, buf);
+  return buf;
+}
+const PARTIAL_SETS = {
+  crash: { lo: 420, hi: 7800, n: 72, seed: 11, len: 3.5, peaks: [{ f: 1800, gain: 0.8 }, { f: 3100, gain: 1.2 }] },
+  ride: { lo: 700, hi: 7000, n: 54, seed: 29, len: 2.5, peaks: [{ f: 3100, gain: 2.0 }, { f: 5000, gain: 1.0 }] },
+  hihat: { lo: 2600, hi: 12500, n: 40, seed: 47, len: 0.6 },
+};
+function shimmer(ctx, dest, when, set, { peak, len }) {
+  const src = ctx.createBufferSource();
+  src.buffer = partialBuffer(ctx, set, PARTIAL_SETS[set]);
+  src.connect(env(ctx, when, peak, len, 0.002)).connect(dest);
+  src.start(when);
+  src.stop(when + Math.min(len + 0.05, src.buffer.duration));
 }
 
 /**
- * シンバル風（乾いた音）：高域ノイズだけで作る。音程のある成分は入れない（入れると銅鑼のように鳴る）。
- *  - 本体：7 kHz 以上（2 段ハイパス）＋ 10 kHz 付近を強調。標準で 0.1 秒で 1/4 まで落ち、0.6 秒で消える
- *  - 打撃音：3 kHz 付近の短いノイズ（スティックが当たる「チッ」）
- * v0.7.1 で変更（v0.7.0 は 400〜1700 Hz の矩形波と 1.8 秒の余韻で、銅鑼のように聞こえた）
- * @param {number} decay 余韻の長さの倍率（0.4〜2.5、1 = 標準 0.6 秒）
+ * 帯域ごとに減衰時間の違うノイズで「シャーン」を作る（低めの帯域ほど長く残る）。
+ * bands: [{type, f, q, peak, len}]
  */
-function playCymbal(ctx, dest, when, decay = 1) {
+function wash(ctx, dest, when, bands, atk = 0.003) {
+  const maxLen = Math.max(...bands.map((b) => b.len));
+  const src = noise(ctx, when, maxLen + atk);
+  for (const b of bands) chain(src, biquad(ctx, b.type, b.f, b.q), env(ctx, when, b.peak, b.len, atk), dest);
+}
+/**
+ * クラッシュ：叩いた瞬間は広い帯域のノイズ（1 秒前後で引く）、その後は金属の部分音が 3 秒ほど残る。
+ * 10 kHz 以上は約 0.3 秒、5〜10 kHz は約 0.7 秒で消える
+ */
+function playCrash(ctx, dest, when, decay = 1) {
   const d = decay;
-  const n = ctx.createBufferSource();
-  n.buffer = noiseBuffer(ctx);
-  const hp1 = ctx.createBiquadFilter(); hp1.type = 'highpass'; hp1.frequency.value = 7000;
-  const hp2 = ctx.createBiquadFilter(); hp2.type = 'highpass'; hp2.frequency.value = 7000;
-  const pk = ctx.createBiquadFilter(); pk.type = 'peaking'; pk.frequency.value = 10000; pk.gain.value = 5; pk.Q.value = 0.9;
-  const g = ctx.createGain();
-  g.gain.setValueAtTime(0.0001, when);
-  g.gain.exponentialRampToValueAtTime(0.32, when + 0.002);
-  g.gain.exponentialRampToValueAtTime(0.08, when + 0.1 * d);
-  g.gain.exponentialRampToValueAtTime(0.001, when + 0.6 * d);
-  n.connect(hp1); hp1.connect(hp2); hp2.connect(pk); pk.connect(g); g.connect(dest);
-  n.start(when, Math.random() * 0.5); n.stop(when + 0.65 * d);
-
-  const s = ctx.createBufferSource();
-  s.buffer = noiseBuffer(ctx);
-  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 3200; bp.Q.value = 1.2;
-  const sg = ctx.createGain();
-  sg.gain.setValueAtTime(0.25, when);
-  sg.gain.exponentialRampToValueAtTime(0.001, when + 0.02);
-  s.connect(bp); bp.connect(sg); sg.connect(dest);
-  s.start(when, Math.random()); s.stop(when + 0.03);
+  wash(ctx, dest, when, [
+    { type: 'bandpass', f: 550, q: 0.8, peak: 0.12, len: 1.3 * d },
+    { type: 'bandpass', f: 1400, q: 0.8, peak: 0.18, len: 1.4 * d },
+    { type: 'bandpass', f: 3300, q: 0.8, peak: 0.28, len: 1.3 * d },
+    { type: 'bandpass', f: 7000, q: 1.2, peak: 0.26, len: 0.7 * d },
+    { type: 'highpass', f: 10500, q: 0.7, peak: 0.1, len: 0.3 * d },
+  ]);
+  shimmer(ctx, dest, when, 'crash', { peak: 0.34, len: 3.2 * d });
 }
 
-/** スネア：短い胴の音＋ノイズ（スナッピー） */
-function playSnare(ctx, dest, when, tune = 1) {
-  const o = ctx.createOscillator();
-  const g = ctx.createGain();
-  o.type = 'triangle';
-  o.frequency.setValueAtTime(200 * tune, when);
-  o.frequency.exponentialRampToValueAtTime(140 * tune, when + 0.08);
-  g.gain.setValueAtTime(0.45, when);
-  g.gain.exponentialRampToValueAtTime(0.001, when + 0.13);
-  o.connect(g); g.connect(dest);
-  o.start(when); o.stop(when + 0.15);
-
-  const n = ctx.createBufferSource();
-  n.buffer = noiseBuffer(ctx);
-  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 1400;
-  const pk = ctx.createBiquadFilter(); pk.type = 'peaking'; pk.frequency.value = 4200; pk.gain.value = 4; pk.Q.value = 0.8;
-  const ng = ctx.createGain();
-  ng.gain.setValueAtTime(0.0001, when);
-  ng.gain.exponentialRampToValueAtTime(0.4, when + 0.002);
-  ng.gain.exponentialRampToValueAtTime(0.001, when + 0.19);
-  n.connect(hp); hp.connect(pk); pk.connect(ng); ng.connect(dest);
-  n.start(when, Math.random()); n.stop(when + 0.2);
-}
-
-/** タム：ピッチが少し下がるサイン波＋短いアタック。f0 は落ち着く先の周波数 */
-function playTom(ctx, dest, when, f0, len, tune = 1) {
-  const f = f0 * tune;
-  const o = ctx.createOscillator();
-  const g = ctx.createGain();
-  o.type = 'sine';
-  o.frequency.setValueAtTime(f * 1.6, when);
-  o.frequency.exponentialRampToValueAtTime(f, when + 0.1);
-  g.gain.setValueAtTime(0.0001, when);
-  g.gain.exponentialRampToValueAtTime(0.65, when + 0.004);
-  g.gain.exponentialRampToValueAtTime(0.001, when + len);
-  o.connect(g); g.connect(dest);
-  o.start(when); o.stop(when + len + 0.02);
-
-  const n = ctx.createBufferSource();
-  n.buffer = noiseBuffer(ctx);
-  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = Math.min(6000, f * 9); bp.Q.value = 0.9;
-  const ng = ctx.createGain();
-  ng.gain.setValueAtTime(0.28, when);
-  ng.gain.exponentialRampToValueAtTime(0.001, when + 0.03);
-  n.connect(bp); bp.connect(ng); ng.connect(dest);
-  n.start(when, Math.random()); n.stop(when + 0.04);
-}
-
-/** ハイハット（閉じた音）：ごく短い高域ノイズ */
-function playHat(ctx, dest, when, decay = 1) {
-  const n = ctx.createBufferSource();
-  n.buffer = noiseBuffer(ctx);
-  const hp1 = ctx.createBiquadFilter(); hp1.type = 'highpass'; hp1.frequency.value = 8000;
-  const hp2 = ctx.createBiquadFilter(); hp2.type = 'highpass'; hp2.frequency.value = 8000;
-  const g = ctx.createGain();
-  const len = 0.07 * Math.min(2, Math.max(0.6, decay));
-  g.gain.setValueAtTime(0.0001, when);
-  g.gain.exponentialRampToValueAtTime(0.45, when + 0.001);
-  g.gain.exponentialRampToValueAtTime(0.001, when + len);
-  n.connect(hp1); hp1.connect(hp2); hp2.connect(g); g.connect(dest);
-  n.start(when, Math.random()); n.stop(when + len + 0.01);
-}
-
-/** ライド：5〜8 kHz 帯のノイズで「チーン」ではなく「チン」と短く。音程のある成分は入れない */
+/** ライド：スティックの「チン」、3 kHz・5 kHz 付近の部分音が中心。ノイズは控えめ */
 function playRide(ctx, dest, when, decay = 1) {
-  const n = ctx.createBufferSource();
-  n.buffer = noiseBuffer(ctx);
-  const bp = ctx.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 6500; bp.Q.value = 1.4;
-  const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 4500;
-  const g = ctx.createGain();
-  g.gain.setValueAtTime(0.0001, when);
-  g.gain.exponentialRampToValueAtTime(0.7, when + 0.002);
-  g.gain.exponentialRampToValueAtTime(0.16, when + 0.06);
-  g.gain.exponentialRampToValueAtTime(0.001, when + 0.45 * decay);
-  n.connect(bp); bp.connect(hp); hp.connect(g); g.connect(dest);
-  n.start(when, Math.random()); n.stop(when + 0.5 * decay);
+  const d = decay;
+  const dark = biquad(ctx, 'lowpass', 7000, 0.6);
+  dark.connect(dest);
+  wash(ctx, dark, when, [
+    { type: 'bandpass', f: 450, q: 1.0, peak: 0.12, len: 0.9 * d },
+    { type: 'bandpass', f: 1500, q: 1.0, peak: 0.08, len: 1.0 * d },
+    { type: 'bandpass', f: 3400, q: 1.1, peak: 0.16, len: 1.1 * d },
+    { type: 'bandpass', f: 6800, q: 1.4, peak: 0.04, len: 0.6 * d },
+  ], 0.002);
+  shimmer(ctx, dark, when, 'ride', { peak: 0.36, len: 2.2 * d });
+  // チップのアタック
+  chain(noise(ctx, when, 0.02), biquad(ctx, 'bandpass', 4200, 1.2), env(ctx, when, 0.3, 0.02, 0.0005), dark);
+}
+
+/** ハイハット（クローズ）：ほぼ全帯域のノイズを 1 kHz 付近だけ少し下げ、約 0.1 秒で止める */
+function playHat(ctx, dest, when, decay = 1) {
+  const len = 0.24 * Math.min(2, Math.max(0.6, decay));
+  chain(noise(ctx, when, len), biquad(ctx, 'highpass', 120, 0.7), biquad(ctx, 'peaking', 1100, 0.8, -6),
+    biquad(ctx, 'highshelf', 6000, 0.7, 3), env(ctx, when, 0.3, len, 0.001), dest);
+  shimmer(ctx, dest, when, 'hihat', { peak: 0.08, len: len * 0.8 });
 }
 
 /**
@@ -203,15 +228,14 @@ export function playHit(ctx, dest, type, when = ctx.currentTime, opts = {}) {
   lv.connect(dest);
   const tune = opts.tune ?? 1, decay = opts.decay ?? 1;
   switch (type) {
-    case 'cymbal': playCymbal(ctx, lv, when, decay); break;        // 旧データ
-    case 'crash': playCymbal(ctx, lv, when, decay * 1.7); break;
+    case 'crash': case 'cymbal': playCrash(ctx, lv, when, decay); break;   // 'cymbal' は旧データ
     case 'ride': playRide(ctx, lv, when, decay); break;
     case 'hihat': playHat(ctx, lv, when, decay); break;
     case 'snare': playSnare(ctx, lv, when, tune); break;
-    case 'tomHigh': playTom(ctx, lv, when, 190, 0.32, tune); break;
-    case 'tomMid': playTom(ctx, lv, when, 140, 0.38, tune); break;
-    case 'tomFloor': playTom(ctx, lv, when, 92, 0.5, tune); break;
-    default: playDrum(ctx, lv, when, tune);                          // kick・旧 'drum'
+    case 'tomHigh': playTom(ctx, lv, when, 116, 0.6, tune, 0.3, 900, 0.7); break;
+    case 'tomMid': playTom(ctx, lv, when, 86, 0.75, tune, 0.5, 650, 0.75); break;
+    case 'tomFloor': lv.gain.value *= 0.85; playTom(ctx, lv, when, 65, 0.95, tune, 0.6, 420, 0.9); break;
+    default: playKick(ctx, lv, when, tune);                                // kick・旧 'drum'
   }
 }
 

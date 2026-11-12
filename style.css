@@ -236,9 +236,9 @@ body {
 .kit-piece { cursor: pointer; transform-box: fill-box; transform-origin: center; }
 .drum-piece.hit { animation: drum-hit 0.12s ease-out; }
 .cymbal-piece.hit { animation: cymbal-hit 0.42s ease-out; }
-@keyframes drum-hit { 0% { transform: scale(0.95); filter: url(#kf-shadow) brightness(1.25); } 100% { transform: scale(1); } }
+@keyframes drum-hit { 0% { transform: scale(0.97) translateY(1.5px); filter: brightness(1.18); } 100% { transform: none; } }
 @keyframes cymbal-hit {
-  0% { transform: scale(0.94, 0.86) rotate(-2deg); filter: url(#kf-shadow) brightness(1.35); }
+  0% { transform: scale(0.97, 0.8) rotate(-2deg); filter: brightness(1.3); }
   35% { transform: scale(1.02, 0.97) rotate(1.5deg); }
   70% { transform: scale(0.99, 1.01) rotate(-0.6deg); }
   100% { transform: none; }
