@@ -5,7 +5,7 @@
 import { detectPitch } from './pitch.js';
 import { pitchShiftPSOLA, buildPitchMarks, matchLoudness, HARMONY_PRESETS, DEFAULT_PRESET_IDS } from './psola.js';
 import { APP_VERSION } from './version.js';
-import { playHit, maskDrumPitch, cleanDrumBleed, KIT, kitOf } from './drums.js';
+import { playHit, maskDrumPitch, cleanDrumBleed, KIT, kitOf, loadDrumSamples } from './drums.js';
 import { renderKit } from './kit.js';
 import { listTakes, getTake, saveTake, setFavorite, updateEnabled, updateDrums, deleteTake, FAVORITE_MAX } from './store.js';
 
@@ -189,11 +189,58 @@ function showScreen(name) {
   el.screenLibrary.hidden = name !== 'library';
 }
 
-async function ensureContext() {
+// ---------- 音の出力の準備（iPhone・iPad 対策を含む） ----------
+// iOS／iPadOS の Safari は、(1) タップの「指を離した」操作の中でないと音を出す許可が下りない、
+// (2) 標準では消音モードのとき Web の音を鳴らさない。そこで、
+//  - 画面のどこかを触って離したとき（touchend・click）に毎回 AudioContext を起こし、無音を 1 回鳴らす
+//  - navigator.audioSession があれば種類を 'playback' にして消音モードでも鳴るようにする
+//    （無い古い iOS では、無音の <audio> を流し続けて同じ効果を得る）
+//  - 録音中だけ 'play-and-record' に切り替える
+function setAudioSession(type) {
+  try { if (navigator.audioSession) navigator.audioSession.type = type; } catch (_) { /* 非対応 */ }
+}
+
+/** AudioContext を同期的に用意する（await しないので、タップ操作の中で呼べば許可が下りる） */
+function getContextSync() {
   if (!state.ctx) {
+    setAudioSession('playback');
     const AC = window.AudioContext || window.webkitAudioContext;
     state.ctx = new AC();
+    loadDrumSamples(state.ctx);
   }
+  if (state.ctx.state !== 'running') {
+    try { state.ctx.resume(); } catch (_) { /* 次の操作で再試行 */ }
+  }
+  return state.ctx;
+}
+
+const IS_IOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+let silentTag = null;
+function unlockAudio() {
+  const ctx = getContextSync();
+  try {
+    // 無音を 1 サンプル鳴らす（iOS の古い版で必要）
+    const b = ctx.createBuffer(1, 1, ctx.sampleRate);
+    const s = ctx.createBufferSource();
+    s.buffer = b; s.connect(ctx.destination); s.start(0);
+  } catch (_) { /* noop */ }
+  if (IS_IOS && !navigator.audioSession && !silentTag) {
+    // 無音の WAV を <audio> でループ再生し、消音モードでも Web Audio が鳴るようにする
+    const wav = 'data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAIlYAAESsAAACABAAZGF0YQIAAAAAAA==';
+    silentTag = new Audio(wav);
+    silentTag.loop = true;
+    silentTag.setAttribute('playsinline', '');
+    silentTag.play().catch(() => { silentTag = null; });
+  }
+}
+for (const ev of ['touchend', 'click', 'keydown']) document.addEventListener(ev, unlockAudio, { capture: true, passive: true });
+document.addEventListener('visibilitychange', () => {
+  if (!silentTag) return;
+  if (document.hidden) silentTag.pause(); else silentTag.play().catch(() => {});
+});
+
+async function ensureContext() {
+  getContextSync();
   if (state.ctx.state !== 'running') await state.ctx.resume();
   if (!state.workletReady && state.ctx.audioWorklet) {
     try {
@@ -218,12 +265,14 @@ async function startRecording() {
     return;
   }
   let stream;
+  setAudioSession('play-and-record');
   try {
     stream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 },
       video: false,
     });
   } catch (e) {
+    setAudioSession('playback');
     showError('マイクが つかえません。設定で マイクを ゆるしてね');
     return;
   }
@@ -309,6 +358,7 @@ async function stopRecording() {
   try { state.srcNode.disconnect(); state.recNode.disconnect(); state.analyser.disconnect(); } catch (_) { /* noop */ }
   state.stream.getTracks().forEach((t) => t.stop());
   state.stream = null;
+  setAudioSession('playback');
 
   const total = state.chunks.reduce((s, c) => s + c.length, 0);
   const pcm = new Float32Array(total);
@@ -925,9 +975,9 @@ async function hitKit(type, node) {
   node.classList.add('hit');
   clearTimeout(node._hitTimer);
   node._hitTimer = setTimeout(() => node.classList.remove('hit'), node.classList.contains('cymbal-piece') ? 420 : 120);
-  let ctx;
-  try { ctx = await ensureContext(); } catch (_) { return; }
-  playHit(ctx, liveDrumBus(ctx), type, ctx.currentTime, hitOpts(type));
+  const ctx = getContextSync();
+  if (ctx.state === 'running') playHit(ctx, liveDrumBus(ctx), type, ctx.currentTime, hitOpts(type));
+  else ctx.resume().then(() => playHit(ctx, liveDrumBus(ctx), type, ctx.currentTime, hitOpts(type))).catch(() => {});
   if (state.overdub && state.playing) {
     // 聞こえている音に合わせて叩くので、出力の遅れ分を差し引く。t は元の録音上の秒
     const lat = (ctx.outputLatency || 0) + (ctx.baseLatency || 0);
@@ -940,6 +990,7 @@ const hasOwnDrums = () => state.drumEvents.some((e) => e.source === 'overdub');
 
 function openDrums() {
   if (!currentSet() || state.recording) return;
+  loadDrumSamples(getContextSync());
   stopPlayback();
   state.drumScreen = true;
   el.screenDrums.hidden = false;

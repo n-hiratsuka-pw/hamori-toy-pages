@@ -1,4 +1,4 @@
-// drums.js — ドラムセットの合成音（依存なし）。v0.8 で声の録音とドラムの打ち込みを分離した。
+// drums.js — ドラムセットの音（依存なし）。v0.9.1 から録音素材（CC0）を優先し、合成音は読み込み前の代わり。v0.8 で声の録音とドラムの打ち込みを分離した。
 // alignHits／cleanDrumBleed／maskDrumPitch は、v0.7 で「歌いながら叩いた」録音（source: 'rec'）を開くための互換処理。
 //
 // 設計（docs/03_設計書.md §5.8）
@@ -216,6 +216,86 @@ function playHat(ctx, dest, when, decay = 1) {
   shimmer(ctx, dest, when, 'hihat', { peak: 0.08, len: len * 0.8 });
 }
 
+// ---- 録音素材（v0.9.1） ----
+// 本物のドラムの録音（CC0 の Virtuosity Drums。samples/CREDITS.md）を優先して鳴らす。
+// 読み込み前・読み込み失敗時は上の合成音で鳴らす。
+// rate は再生速度（＝音程の倍率）。タム（ひくい）は高いタムを約 4 半音下げて使う。
+const SAMPLE_MAP = {
+  kick: { files: ['kick_1', 'kick_2'], rate: 1, gain: 0.95, family: 'drum' },
+  snare: { files: ['snare_1', 'snare_2'], rate: 1, gain: 1.0, family: 'drum' },
+  tomHigh: { files: ['htom_1', 'htom_2'], rate: 1, gain: 0.72, family: 'drum' },
+  tomMid: { files: ['htom_1', 'htom_2'], rate: 0.8, gain: 0.75, family: 'drum' },
+  tomFloor: { files: ['ltom_1', 'ltom_2'], rate: 1, gain: 0.75, family: 'drum' },
+  hihat: { files: ['hihat_1', 'hihat_2'], rate: 1, gain: 0.85, family: 'cymbal' },
+  crash: { files: ['crash_1'], rate: 1, gain: 0.62, family: 'cymbal' },
+  ride: { files: ['ride_1'], rate: 1, gain: 0.95, family: 'cymbal' },
+};
+SAMPLE_MAP.drum = SAMPLE_MAP.kick;      // 旧データ
+SAMPLE_MAP.cymbal = SAMPLE_MAP.crash;   // 旧データ
+
+const sampleStore = new WeakMap();      // ctx → { buffers: Map(name → AudioBuffer), loading: Promise }
+const rrIndex = {};
+
+/** 録音素材を読み込む（何度呼んでも 1 回だけ）。失敗しても例外は投げない */
+export function loadDrumSamples(ctx, base = './samples/') {
+  let st = sampleStore.get(ctx);
+  if (st) return st.loading;
+  st = { buffers: new Map(), loading: null };
+  sampleStore.set(ctx, st);
+  const names = [...new Set(Object.values(SAMPLE_MAP).flatMap((m) => m.files))];
+  st.loading = Promise.all(names.map(async (name) => {
+    try {
+      const res = await fetch(`${base}${name}.wav`);
+      if (!res.ok) throw new Error(res.status);
+      const arr = await res.arrayBuffer();
+      const buf = await new Promise((resolve, reject) => {
+        // 古い Safari はコールバック形式のみのため両対応
+        const p = ctx.decodeAudioData(arr, resolve, reject);
+        if (p && p.then) p.then(resolve, reject);
+      });
+      st.buffers.set(name, buf);
+    } catch (e) {
+      console.warn('drum sample load failed', name, e);
+    }
+  })).then(() => st.buffers.size);
+  return st.loading;
+}
+
+function playSample(ctx, dest, type, when, opts) {
+  const st = sampleStore.get(ctx);
+  const m = SAMPLE_MAP[type];
+  if (!st || !m) return false;
+  const k = (rrIndex[type] = ((rrIndex[type] ?? -1) + 1) % m.files.length);
+  const buf = st.buffers.get(m.files[k]);
+  if (!buf) return false;
+  const src = ctx.createBufferSource();
+  src.buffer = buf;
+  // 毎回少しだけ揺らす（機械的な同じ音の連続を避ける）
+  const human = 1 + (Math.random() - 0.5) * 0.02;
+  src.playbackRate.value = m.rate * (m.family === 'drum' ? (opts.tune ?? 1) : 1) * human;
+  const g = ctx.createGain();
+  const level = (opts.level ?? 1) * m.gain * (0.92 + Math.random() * 0.08);
+  const dur = buf.duration / src.playbackRate.value;
+  const decay = m.family === 'cymbal' ? (opts.decay ?? 1) : 1;
+  g.gain.setValueAtTime(level, when);
+  if (decay < 0.999) {
+    // ひびきを短くする：途中から早めに消す
+    const end = Math.max(0.08, dur * decay);
+    g.gain.setValueAtTime(level, when + end * 0.3);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + end);
+  }
+  src.connect(g); g.connect(dest);
+  if (type === 'kick' || type === 'drum') {
+    // スマホのスピーカーでも聞こえるよう、ビーターのアタック帯域を少し持ち上げる
+    const eq = ctx.createBiquadFilter();
+    eq.type = 'peaking'; eq.frequency.value = 3200; eq.Q.value = 0.9; eq.gain.value = 5;
+    src.disconnect(); src.connect(eq); eq.connect(g);
+  }
+  src.start(when);
+  src.stop(when + Math.min(dur, decay < 0.999 ? Math.max(0.08, dur * decay) : dur) + 0.02);
+  return true;
+}
+
 /**
  * 1 打を鳴らす。
  * @param {string} type KIT の type（旧 'drum'／'cymbal' も可）
@@ -223,6 +303,8 @@ function playHat(ctx, dest, when, decay = 1) {
  *   level 音量（0〜1.2）、tune 太鼓類の高さ倍率、decay シンバル類の余韻倍率
  */
 export function playHit(ctx, dest, type, when = ctx.currentTime, opts = {}) {
+  if (playSample(ctx, dest, type, when, opts)) return;
+  // 録音素材がまだ無いときは合成音
   const lv = ctx.createGain();
   lv.gain.value = opts.level ?? 1;
   lv.connect(dest);
